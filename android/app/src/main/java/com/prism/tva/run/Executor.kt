@@ -66,6 +66,20 @@ class Executor(private val svc: TvaAccessibilityService) {
         return if (intent.isNotBlank()) "${fill(intent, c.slots)} ($base)" else base
     }
 
+    /** What the element looked like in the demonstration, to steer the LLM when the screen differs. */
+    private fun demoHint(st: JSONObject): String {
+        val t = st.optJSONObject("target") ?: return ""
+        val label = t.optString("leafLabel").ifEmpty { t.optString("label") }.take(60)
+        val card = t.optJSONArray("rowLabels")?.let { a -> (0 until minOf(3, a.length())).map { a.getString(it).take(40) } }.orEmpty()
+        return buildString {
+            append(" In the demonstration this was a ${if (t.optBoolean("editable")) "text box" else "button"}")
+            if (label.isNotEmpty()) append(" labelled \"").append(label).append('"')
+            if (t.optString("id").isNotEmpty()) append(" (id ").append(t.optString("id")).append(')')
+            if (card.isNotEmpty()) append(", inside a card showing ").append(card.joinToString(" / ") { "\"$it\"" })
+            append('.')
+        }
+    }
+
     private suspend fun run(recipe: JSONObject, slotsIn: Map<String, String>, utterance: String, appOverride: String?): JSONObject {
         val steps = recipe.getJSONArray("steps")
         val app = appOverride ?: recipe.getString("app")
@@ -232,15 +246,16 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             val elapsed = System.currentTimeMillis() - start
             if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
-            // Fast path found nothing clear: let the LLM look at the screen.
-            if (Fireworks.available && llmActs < 8 && elapsed < 45000) {
+            // Fast path found nothing clear: let the LLM look at the screen. A stuck step is reported
+            // within 30 s rather than guessing on (e.g. an app switched to another language).
+            if (Fireworks.available && llmActs < 8 && elapsed < 26000) {
                 llmActs++
                 method = "llm"
-                val r = llmAct(stepText(st, c), c, snap) ?: continue
+                val r = llmAct(stepText(st, c) + demoHint(st), c, snap) ?: continue
                 if (r.second) return r.first // step finished, handed over, or failed
                 continue
             }
-            if (elapsed > (if (llmActs > 0) 55000 else 15000) || scrolls >= 12) {
+            if (elapsed > (if (llmActs > 0) 30000 else 15000) || scrolls >= 12) {
                 return StepResult(false, "failed", "notfound", "I couldn't find ${Generaliser.describe(st, c.slots).removePrefix("Tap ")} on this screen")
             }
             if (scrollOnce(snap, c.app, forward = scrolls < 6)) scrolls++ else delay(400)
@@ -311,16 +326,18 @@ class Executor(private val svc: TvaAccessibilityService) {
         return StepResult(false, "failed", "goal", "I couldn't complete: $goal")
     }
 
+    /**
+     * Scrolls the page the way a thumb would: a vertical swipe through the middle of the screen. (The
+     * "largest scrollable element" is often a horizontal image carousel, which an accessibility
+     * scroll would move sideways.) Falls back to an accessibility scroll if the swipe can't be sent.
+     */
     private suspend fun scrollOnce(snap: Snapshot, app: String, forward: Boolean): Boolean {
-        val sc = Resolver.mainScrollable(snap, app) ?: return false
-        if (!Actions.scroll(sc, forward)) {
-            val b = sc.bounds
-            val (y1, y2) = if (forward) b.top + b.height() * 0.75f to b.top + b.height() * 0.3f
-            else b.top + b.height() * 0.3f to b.top + b.height() * 0.75f
-            Actions.swipe(svc, b.exactCenterX(), y1, b.exactCenterX(), y2)
-        }
-        svc.settle(300, 2000)
-        return true
+        val x = snap.screenW * 0.5f
+        val (y1, y2) = if (forward) snap.screenH * 0.68f to snap.screenH * 0.32f else snap.screenH * 0.32f to snap.screenH * 0.68f
+        var ok = Actions.swipe(svc, x, y1, x, y2, 380)
+        if (!ok) ok = Resolver.mainScrollable(snap, app)?.let { Actions.scroll(it, forward) } ?: false
+        svc.settle(350, 2000)
+        return ok
     }
 
     private suspend fun type(st: JSONObject, c: Ctx): StepResult {
