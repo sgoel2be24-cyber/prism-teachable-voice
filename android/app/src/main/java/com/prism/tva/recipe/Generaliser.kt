@@ -1,0 +1,228 @@
+package com.prism.tva.recipe
+
+import android.content.Context
+import com.prism.tva.core.Actions
+import com.prism.tva.core.Text
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * Turns one teach recording plus the spoken command into a reusable recipe, without an LLM.
+ *
+ * Slots are found the way SUGILITE (Li et al., CHI 2017) does it: a word or phrase from the command
+ * that reappears in something the user typed, tapped, or tapped next to becomes a parameter.
+ * "Order a Margherita pizza from Domino's" + typed "dominos" + ADD tapped in the card that says
+ * "Margherita Pizza"  ->  "order a {item} pizza from {query} ...".
+ * The LLM pass (later) renames slots, writes step intents and flags noise; this pass is the fallback.
+ */
+object Generaliser {
+
+    private val STOP = setOf(
+        "a", "an", "the", "to", "from", "on", "in", "at", "of", "for", "and", "with", "me", "my", "please",
+        "i", "want", "would", "like", "get", "order", "buy", "add", "search", "find", "open", "show", "cart",
+        "app", "then", "it", "into", "first", "result", "results", "some", "can", "you", "via", "using", "go",
+        "is", "this", "that", "up", "let", "lets", "now", "just",
+    )
+    private val SYSTEM_PKGS = setOf("com.android.systemui")
+
+    private class Span(val start: Int, val end: Int, val text: String)
+    private class Slot(val name: String, val span: Span)
+
+    fun build(rec: JSONObject, ctx: Context, homePkg: String?, ownPkg: String): JSONObject {
+        val command = rec.getString("command")
+        val arr = rec.getJSONArray("steps")
+        val raw = (0 until arr.length()).map { arr.getJSONObject(it) }
+
+        // 1. Which app was this taught on? The one most taps and typing happened in.
+        val app = raw.filter { it.optString("kind") in setOf("tap", "longpress", "type") }
+            .map { it.optString("pkg") }
+            .filter { it.isNotEmpty() && it != homePkg && it != ownPkg && it !in SYSTEM_PKGS && !it.contains("inputmethod") }
+            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: ""
+        val appLabel = if (app.isEmpty()) "" else Actions.appLabel(ctx, app)
+
+        // 2. Keep the app's own steps; everything else (launcher, other apps, calls, shade) is noise.
+        val kept = ArrayList<JSONObject>()
+        val noise = JSONArray()
+        var seenApp = false
+        for (s in raw) {
+            val pkg = s.optString("pkg")
+            when (s.optString("kind")) {
+                "tap", "longpress", "type" -> when {
+                    pkg == app -> { seenApp = true; kept.add(s) }
+                    pkg == homePkg && !seenApp -> Unit // the launcher tap that opened the app
+                    else -> noise.put(JSONObject().put("reason", "outside ${appLabel.ifEmpty { "the app" }}: $pkg")
+                        .put("label", s.optJSONObject("target")?.optString("leafLabel") ?: ""))
+                }
+                "back" -> if (seenApp) kept.add(JSONObject().put("kind", "back"))
+                else -> Unit // scrolls are re-done automatically while searching; home ends the flow
+            }
+        }
+        while (kept.isNotEmpty() && kept.last().optString("kind") == "back") kept.removeAt(kept.size - 1)
+        dedupe(kept)
+
+        // 3. Slots.
+        val appWords = (Text.tokens(appLabel) + Text.tokens(app.substringAfterLast('.'))).toSet()
+        val cmdTokens = Text.tokens(command)
+        val isContent = { t: String -> t !in STOP && t !in appWords }
+        val spans = ArrayList<Span>()
+        for (len in 1..4) for (i in 0..cmdTokens.size - len) {
+            val sub = cmdTokens.subList(i, i + len)
+            if (!isContent(sub.first()) || !isContent(sub.last())) continue
+            spans.add(Span(i, i + len, sub.joinToString(" ")))
+        }
+        val slots = ArrayList<Slot>()
+        fun slotFor(sp: Span, base: String): Slot {
+            slots.firstOrNull { it.span.start == sp.start && it.span.end == sp.end }?.let { return it }
+            var name = base
+            var k = 2
+            while (slots.any { it.name == name }) name = base + k++
+            return Slot(name, sp).also { slots.add(it) }
+        }
+        fun overlapsSlot(sp: Span) = slots.any { sp.start < it.span.end && it.span.start < sp.end }
+
+        val steps = JSONArray()
+        steps.put(JSONObject().put("kind", "launch").put("pkg", app).put("label", appLabel)
+            .put("desc", "Open $appLabel"))
+        for (s in kept) {
+            val kind = s.optString("kind")
+            val out = JSONObject(s.toString())
+            out.remove("screen"); out.remove("t")
+            when (kind) {
+                "type" -> {
+                    val typed = s.optString("text")
+                    val best = spans.filter { Text.fuzzyContains(typed, it.text) || Text.fuzzyContains(it.text, typed) }
+                        .maxByOrNull { Text.sim(it.text, typed) }
+                    if (best != null && Text.sim(best.text, typed) >= 0.6 && !s.optBoolean("secret")) {
+                        out.put("textSlot", slotFor(best, "query").name)
+                    }
+                }
+                "tap", "longpress" -> {
+                    val t = s.optJSONObject("target") ?: JSONObject()
+                    val own = listOf(t.optString("leafLabel"), t.optString("label")) + t.optJSONArray("ownLabels").strings()
+                    val row = t.optJSONArray("rowLabels").strings()
+                    val existing = slots.firstOrNull { sl -> own.any { Text.fuzzyContains(it, sl.span.text) } }
+                    val fresh = existing ?: spans.filter { !overlapsSlot(it) && it.text.length >= 3 }
+                        .sortedBy { it.end - it.start }
+                        .firstOrNull { sp -> own.any { Text.fuzzyContains(it, sp.text) } }
+                        ?.let { slotFor(it, "choice") }
+                    if (fresh != null) {
+                        out.put("textSlot", fresh.name)
+                    } else {
+                        val anchorSlot = slots.firstOrNull { sl -> row.any { Text.fuzzyContains(it, sl.span.text) } }
+                            ?: spans.filter { !overlapsSlot(it) && it.text.length >= 3 }
+                                .sortedBy { it.end - it.start }
+                                .firstOrNull { sp -> row.any { Text.fuzzyContains(it, sp.text) } }
+                                ?.let { slotFor(it, "item") }
+                        if (anchorSlot != null) out.put("anchorSlot", anchorSlot.name)
+                        else if (row.isNotEmpty() && t.optString("leafLabel").length <= 14) {
+                            // Short/generic button ("ADD", "+"): remember the card it sat in.
+                            row.firstOrNull { l -> l.any { it.isLetter() } && Text.stable(l).length >= 3 }
+                                ?.let { out.put("anchorText", it) }
+                        }
+                    }
+                }
+            }
+            steps.put(out)
+        }
+
+        // 4. Template for matching later commands, and human-readable step descriptions.
+        val template = cmdTokens.indices.joinToString(" ") { i ->
+            val sl = slots.firstOrNull { i >= it.span.start && i < it.span.end }
+            when {
+                sl == null -> cmdTokens[i]
+                i == sl.span.start -> "{${sl.name}}"
+                else -> ""
+            }
+        }.replace(Regex("\\s+"), " ").trim()
+        val slotArr = JSONArray()
+        slots.forEach { slotArr.put(JSONObject().put("name", it.name).put("example", it.span.text)) }
+        val examples = slots.associate { it.name to it.span.text }
+        for (i in 0 until steps.length()) {
+            val st = steps.getJSONObject(i)
+            if (!st.has("desc")) st.put("desc", describe(st, examples))
+        }
+
+        return JSONObject()
+            .put("id", "r_" + System.currentTimeMillis())
+            .put("name", Text.clean(command))
+            .put("command", command)
+            .put("template", template)
+            .put("app", app).put("appLabel", appLabel)
+            .put("slots", slotArr)
+            .put("steps", steps)
+            .put("noise", noise)
+            .put("recording", rec.optString("id"))
+            .put("createdAt", System.currentTimeMillis())
+            .put("source", "heuristic")
+    }
+
+    /** Human-readable description of a recipe step, with slot values filled in. */
+    fun describe(st: JSONObject, slots: Map<String, String>): String {
+        val t = st.optJSONObject("target")
+        fun v(name: String) = slots[name] ?: name
+        return when (st.optString("kind")) {
+            "launch" -> "Open ${st.optString("label")}"
+            "back" -> "Go back"
+            "type" -> {
+                val text = if (st.has("textSlot")) v(st.getString("textSlot")) else st.optString("text")
+                "Type \"$text\"" + if (st.optBoolean("submit")) " and search" else ""
+            }
+            "tap", "longpress" -> {
+                val label = when {
+                    st.has("textSlot") -> v(st.getString("textSlot"))
+                    else -> t?.optString("leafLabel")?.ifEmpty { t.optString("id") } ?: "element"
+                }
+                val anchor = when {
+                    st.has("anchorSlot") -> v(st.getString("anchorSlot"))
+                    st.has("anchorText") -> st.getString("anchorText")
+                    else -> ""
+                }
+                (if (st.optString("kind") == "longpress") "Long-press" else "Tap") + " \"$label\"" +
+                    if (anchor.isNotEmpty()) " next to \"$anchor\"" else ""
+            }
+            else -> st.optString("kind")
+        }
+    }
+
+    private fun dedupe(list: MutableList<JSONObject>) {
+        var i = 1
+        while (i < list.size) {
+            val a = list[i - 1]
+            val b = list[i]
+            val same = a.optString("kind") == "tap" && b.optString("kind") == "tap" &&
+                b.optLong("t") - a.optLong("t") < 400 &&
+                a.optJSONObject("target")?.optString("leafLabel") == b.optJSONObject("target")?.optString("leafLabel")
+            if (same) list.removeAt(i) else i++
+        }
+    }
+
+    private fun JSONArray?.strings(): List<String> =
+        if (this == null) emptyList() else (0 until length()).map { optString(it) }.filter { it.isNotEmpty() }
+}
+
+/** Maps a new command onto a learned recipe (template match). The LLM matcher handles paraphrases. */
+object Matcher {
+    class Match(val recipe: JSONObject, val slots: Map<String, String>, val how: String)
+
+    fun examples(r: JSONObject): Map<String, String> {
+        val arr = r.optJSONArray("slots") ?: return emptyMap()
+        return (0 until arr.length()).associate { arr.getJSONObject(it).let { s -> s.getString("name") to s.optString("example") } }
+    }
+
+    fun match(utterance: String, recipes: List<JSONObject>): Match? {
+        val u = Text.norm(utterance)
+        for (r in recipes.asReversed()) {
+            if (Text.norm(r.optString("command")) == u) return Match(r, examples(r), "exact")
+        }
+        for (r in recipes.asReversed()) {
+            val names = ArrayList<String>()
+            val pattern = r.optString("template").split(' ').filter { it.isNotEmpty() }.joinToString("\\s+") { tok ->
+                val m = Regex("^\\{([a-z0-9_]+)\\}$").find(tok)
+                if (m != null) { names.add(m.groupValues[1]); "(.+?)" } else Regex.escape(tok)
+            }
+            val hit = Regex("^$pattern$").find(u) ?: continue
+            return Match(r, names.mapIndexed { i, n -> n to hit.groupValues[i + 1] }.toMap(), "template")
+        }
+        return null
+    }
+}

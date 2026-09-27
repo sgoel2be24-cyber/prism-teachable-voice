@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Teach Spike</string>
-    <string name="service_label">Teach Spike recorder</string>
-    <string name="service_description">Development build: logs screen events and runs test commands so we can learn how apps expose their screens.</string>
+    <string name="app_name">Teachable Voice</string>
+    <string name="service_label">Teachable Voice assistant</string>
+    <string name="service_description">Watches while you teach a task once, then repeats it in other apps when you ask. It reads the screen and taps on your behalf, never types passwords or OTPs, and always stops at payment and login screens so you complete them yourself.</string>
 </resources>

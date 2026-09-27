@@ -3,7 +3,7 @@
 recon/*/
 recon/*.log
 recon/.capture.pid
-.fireworks_key
+.fireworks_key*
 *.key
 *.jks
 *.keystore
