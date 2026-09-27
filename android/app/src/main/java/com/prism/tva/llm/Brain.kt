@@ -74,20 +74,27 @@ Reply with JSON only: {"flow": id|null, "slots": {name: value}, "missing": [name
     private const val ACT_SYS = """You operate an Android app on the user's behalf through its accessibility tree, one action at a time.
 You get the overall task, the current goal, and the numbered elements on screen. Choose ONE action.
 Rules:
-- If a pop-up, dialog, banner, tooltip or sheet you did not expect covers the screen, dismiss it (Got it / Close / Not now / Skip / ✕ / Cancel) unless it is part of the goal.
+- If a pop-up, dialog, banner, tooltip or sheet you did not expect covers the screen, dismiss it (Got it / Close / Not now / Skip / ✕ / Cancel) unless it is part of the goal. A sheet left over from before (a size picker, filters) is not part of the goal: close it with ✕, or tap the large unlabelled backdrop button behind it if back does nothing.
 - If the goal's element is not on screen, scroll (scroll_down / scroll_up) or go back if you are on the wrong page.
-- If the goal is already satisfied on this screen (for example the item is already in the cart with the right quantity), reply "done".
+- "Already done this run" says what each of your earlier actions did. Never repeat an action that changed nothing; try something else. A full-screen photo viewer or image gallery is a dead end: go back.
+- If the goal is already satisfied on this screen (for example the item is already in the cart with the right quantity), reply "done" and set "element" to the element that proves it (the item's name in the cart list, an "Added to bag" or "item in your bag" message, the add button of this product now reading "Go to bag" / "Go to cart", a filled field). "Add" buttons on other, similar products further down do not mean this one still needs adding. Being on a cart or bag page is not proof by itself: the item from this run must be listed. If nothing on screen proves it, do not reply done.
+- The task was demonstrated once, possibly in a different app or on an older screen. Look for the equivalent element even if it is worded differently ("Add to bag" = "Add to cart", "Bag" = "Cart"). If the goal needs an intermediate screen (open the product page to find the add button, open a sheet), take that step yourself.
 - Never tap anything that pays, places an order, or submits a login, password, OTP or PIN. Reply "ask" instead.
-- If you cannot tell how to reach the goal (logged out, app in a language or state you cannot handle, required choice not given), reply "ask" with ONE short question for the user.
+- Never choose a size, colour, variant or any other personal option yourself unless the user's values say which one, or there is only one option. Reply "ask" with ONE short question instead, e.g. "Which size?". If the user's choice is not available (greyed out, sold out), ask again naming what is available if you can tell. Options in a horizontal-list may continue off screen: scroll_right on that list (element = the list) before deciding a choice is missing.
+- Also reply "ask" when you truly cannot proceed (logged out, an app language you cannot read, an error). Never ask the user to describe the screen.
 - "completes_step": true only if your action itself achieves the current goal.
-Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"back"|"done"|"ask", "element": number|null, "text": string|null, "question": string|null, "completes_step": true|false, "reason": "short"}"""
+Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"scroll_right"|"scroll_left"|"back"|"done"|"ask", "element": number|null, "text": string|null, "question": string|null, "completes_step": true|false, "reason": "short"}"""
 
-    suspend fun decide(task: String, goal: String, history: List<String>, snap: Snapshot, pkg: String): Decision? {
+    suspend fun decide(task: String, goal: String, history: List<String>, snap: Snapshot, pkg: String,
+                       values: Map<String, String> = emptyMap(), deadEnds: List<String> = emptyList()): Decision? {
         val (screen, elements) = renderScreen(snap, pkg)
         val user = buildString {
             append("Task: ").append(task).append('\n')
+            if (values.isNotEmpty()) append("User's values: ").append(values.entries.joinToString(", ") { "${it.key}=${it.value}" }).append('\n')
             append("Current goal: ").append(goal).append('\n')
             if (history.isNotEmpty()) append("Already done this run: ").append(history.takeLast(8).joinToString("; ")).append('\n')
+            if (deadEnds.isNotEmpty()) append("Already tried on THIS screen and it did nothing (do not choose again): ").append(deadEnds.joinToString("; ")).append('\n')
+            if (elements.isEmpty()) append("(No elements from the app are on screen: it may still be loading.)\n")
             append('\n').append(screen)
         }
         val j = Fireworks.json(ACT_SYS, user, "act") ?: return null
@@ -98,6 +105,26 @@ Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"back"|"
         return Decision(action, node, j.optString("text").takeIf { it.isNotBlank() && it != "null" },
             j.optString("question").takeIf { it.isNotBlank() && it != "null" },
             j.optBoolean("completes_step", false), j.optString("reason"))
+    }
+
+    private val ID_LIKE = Regex("^[a-z0-9]+([_-][a-z0-9]+)+$|^[a-z]+([A-Z][a-z0-9]*)+$|^[a-z]+$")
+
+    /** A developer tag rather than words a person reads (React Native apps expose test ids like "buy_button"). */
+    fun idLike(s: String) = ID_LIKE.matches(s.trim())
+
+    /**
+     * What an element says on screen. When its accessibility label is a developer tag, the words
+     * drawn inside it come first (Myntra's "Add to Bag" button is labelled "buy_button").
+     */
+    fun display(snap: Snapshot, n: UiNode, max: Int = 100): String {
+        val own = n.label
+        if (own.isNotEmpty() && !idLike(own)) return own.take(max)
+        val inner = snap.labelsIn(n, 6).filter { it != own && !idLike(it) }.take(3)
+        return when {
+            inner.isEmpty() -> own
+            own.isEmpty() -> inner.joinToString(" · ")
+            else -> inner.joinToString(" · ") + " [tag $own]"
+        }.take(max)
     }
 
     /** Numbered, compact view of the app's screen for the LLM, plus the element list it indexes into. */
@@ -124,10 +151,11 @@ Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"back"|"
         sb.append("Screen: ").append(snap.activity?.substringAfterLast('.') ?: "").append('\n')
         if (wins.size > 1) sb.append("(An extra window such as a dialog or sheet is open; its elements are listed first.)\n")
         sorted.forEachIndexed { i, n ->
-            val label = n.label.ifEmpty { snap.labelsIn(n, 3).joinToString(" · ") }.take(90)
+            val label = display(snap, n)
             val role = when {
                 n.editable -> "field"
-                n.scrollable && !n.clickable -> "scroll-area"
+                n.scrollable && !n.clickable ->
+                    if (n.shortCls.contains("Horizontal") || n.bounds.width() > n.bounds.height() * 3) "horizontal-list" else "scroll-area"
                 n.clickable || n.longClickable -> if (n.shortCls.contains("Check") || n.shortCls.contains("Radio")) "option" else "button"
                 else -> "text"
             }

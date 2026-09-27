@@ -42,6 +42,8 @@ class Executor(private val svc: TvaAccessibilityService) {
         val history: ArrayList<String> = ArrayList(),
         var llmCalls: Int = 0,
         var asks: Int = 0,
+        val cross: Boolean = false, // running a recipe in a different app than it was taught in
+        val deadEnds: HashMap<Int, MutableSet<String>> = HashMap(), // screen signature -> actions that did nothing there
     )
 
     @Volatile private var job: Job? = null
@@ -84,8 +86,11 @@ class Executor(private val svc: TvaAccessibilityService) {
         val steps = recipe.getJSONArray("steps")
         val app = appOverride ?: recipe.getString("app")
         val slots = HashMap(slotsIn)
-        val c = Ctx(recipe, slots, app, fill(recipe.optString("description").ifEmpty { recipe.optString("name") }, slots)
-            .ifEmpty { recipe.optString("name") } + if (appOverride != null) " (in ${Actions.appLabel(svc, app)})" else "")
+        val base = fill(recipe.optString("description").ifEmpty { recipe.optString("name") }, slots).ifEmpty { recipe.optString("name") }
+        val c = Ctx(recipe, slots, app,
+            if (appOverride == null) base
+            else "$base — taught in ${recipe.optString("appLabel")}, now doing the same in ${Actions.appLabel(svc, app)} (its buttons and screens differ)",
+            cross = appOverride != null)
         val goals = recipe.optJSONArray("goals") ?: JSONArray()
         val runId = "run_" + System.currentTimeMillis()
         val log = JSONArray()
@@ -132,13 +137,15 @@ class Executor(private val svc: TvaAccessibilityService) {
                         slots[name] = ans
                     }
                 }
-                val desc = stepText(st, c)
-                svc.hud.update("${i + 1}/${steps.length()} · ${Generaliser.describe(st, slots)}")
+                val isLaunch = st.optString("kind") == "launch"
+                val short = if (isLaunch) "Open ${Actions.appLabel(svc, c.app)}" else Generaliser.describe(st, slots)
+                val desc = if (isLaunch) short else stepText(st, c)
+                svc.hud.update("${i + 1}/${steps.length()} · $short")
                 val s0 = System.currentTimeMillis()
                 val r = runStep(st, c)
                 record(i, desc, r, System.currentTimeMillis() - s0)
                 if (!r.ok) { outcome = r.outcome; reason = r.note; stoppedAt = i; break }
-                c.history.add(Generaliser.describe(st, slots))
+                c.history.add(short)
             }
         } catch (e: CancellationException) {
             outcome = "stopped"; reason = "stopped by the user"
@@ -222,19 +229,46 @@ class Executor(private val svc: TvaAccessibilityService) {
 
     private suspend fun press(n: UiNode, long: Boolean = false): Boolean {
         var ok = if (long) Actions.longClick(n) else (n.clickable && Actions.click(n))
-        if (!ok) ok = Actions.tap(svc, n.bounds.exactCenterX(), n.bounds.exactCenterY(), long)
+        if (!ok) ok = throughHud { Actions.tap(svc, n.bounds.exactCenterX(), n.bounds.exactCenterY(), long) }
         return ok
     }
 
+    /** Runs a real gesture with the status pill made touch-transparent, so the gesture can't hit it. */
+    private suspend fun <T> throughHud(block: suspend () -> T): T {
+        svc.hud.setTouchable(false)
+        delay(80)
+        try { return block() } finally { svc.hud.setTouchable(true) }
+    }
+
     private suspend fun tap(st: JSONObject, c: Ctx): StepResult {
-        val start = System.currentTimeMillis()
+        var start = System.currentTimeMillis()
         var scrolls = 0
         var llmActs = 0
         var method = "match"
+        var checks = 0 // times we re-checked an LLM "this finishes the step" claim on the resulting screen
+        var verifying = false
         while (true) {
             svc.settle(400, 4000)
             val snap = svc.snapshot()
             guardScreen(snap, c.app)?.let { return it }
+            if (verifying) {
+                // The LLM said its last tap finished the step. Check the resulting screen instead of
+                // trusting it (e.g. "Add to bag" does nothing until a size is chosen).
+                if (llmActs >= (if (c.cross) 20 else 12) || System.currentTimeMillis() - start > (if (c.cross) 80000 else 60000)) {
+                    return StepResult(false, "failed", "llm", "I couldn't confirm: ${Generaliser.describe(st, c.slots)}")
+                }
+                llmActs++
+                val t = System.currentTimeMillis()
+                val r = llmAct("Check whether this is now done: ${stepText(st, c)}. If it is, reply done. " +
+                    "If something is still needed first (a required size or option, a confirmation sheet), do that next.", c, snap, strict = true)
+                    ?: continue
+                if (r.first.method == "ask") start += System.currentTimeMillis() - t
+                if (!r.second) { continue }
+                // Another "this tap finishes it" claim: look again. Only a done with proof on screen
+                // (or a hand-over / question / failure) ends the step; the caps above bound the loop.
+                if (r.first.method == "llm" && r.first.ok) { checks++; continue }
+                return r.first
+            }
             val m = Resolver.resolve(st, c.slots, snap, c.app)
             if (m != null) {
                 guardTap(snap, m.node)?.let { return it }
@@ -248,14 +282,18 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
             // Fast path found nothing clear: let the LLM look at the screen. A stuck step is reported
             // within 30 s rather than guessing on (e.g. an app switched to another language).
-            if (Fireworks.available && llmActs < 8 && elapsed < 26000) {
+            // In another app every screen is new, so the LLM gets a bigger budget there.
+            if (Fireworks.available && llmActs < (if (c.cross) 12 else 8) && elapsed < (if (c.cross) 45000 else 26000)) {
                 llmActs++
                 method = "llm"
+                val t = System.currentTimeMillis()
                 val r = llmAct(stepText(st, c) + demoHint(st), c, snap) ?: continue
-                if (r.second) return r.first // step finished, handed over, or failed
+                if (r.first.method == "ask") start += System.currentTimeMillis() - t // waiting for the user doesn't count
+                if (r.second && r.first.method == "llm" && r.first.ok) { verifying = true; checks++; continue }
+                if (r.second) return r.first // done, handed over, asked, or failed
                 continue
             }
-            if (elapsed > (if (llmActs > 0) 30000 else 15000) || scrolls >= 12) {
+            if (elapsed > (if (llmActs > 0) (if (c.cross) 50000 else 30000) else 15000) || scrolls >= 12) {
                 return StepResult(false, "failed", "notfound", "I couldn't find ${Generaliser.describe(st, c.slots).removePrefix("Tap ")} on this screen")
             }
             if (scrollOnce(snap, c.app, forward = scrolls < 6)) scrolls++ else delay(400)
@@ -266,21 +304,50 @@ class Executor(private val svc: TvaAccessibilityService) {
      * One LLM decision on the current screen. Returns (result, final): final=true means the step is
      * finished (done, handed over or failed); false means keep trying (e.g. a pop-up was dismissed).
      */
-    private suspend fun llmAct(goal: String, c: Ctx, snap: Snapshot): Pair<StepResult, Boolean>? {
+    private suspend fun llmAct(goal: String, c: Ctx, snap: Snapshot, strict: Boolean = false): Pair<StepResult, Boolean>? {
         c.llmCalls++
-        val d = Brain.decide(c.task, goal, c.history, snap, c.app)
+        val before = sig(snap, c.app)
+        val dead = c.deadEnds.getOrPut(before) { HashSet() }
+        val d = Brain.decide(c.task, goal, c.history, snap, c.app, c.slots.filterValues { it.isNotBlank() }, dead.toList())
         if (d == null) {
             delay(300)
             return null
         }
-        Dbg.log("LLM_DECIDE ${d.action} el=${d.node?.label?.take(40)} completes=${d.completesStep} :: ${d.reason}")
+        val key = d.action + (d.node?.let { n -> " \"" + Brain.display(snap, n, 40).ifEmpty { n.shortId.ifEmpty { "element at y=${n.bounds.centerY() * 100 / snap.screenH}%" } } + "\"" } ?: "")
+        Dbg.log("LLM_DECIDE $key completes=${d.completesStep} :: ${d.reason}")
+        if (key in dead && d.action != "done" && d.action != "ask") {
+            // The model keeps picking something that already did nothing here; don't let it spin.
+            c.history.add("refused to repeat $key (it did nothing on this screen)")
+            return StepResult(true, "success", "llm", "repeat refused") to false
+        }
+        // Tells the LLM what its action actually did, so it doesn't repeat a dead end, plus the
+        // headline of a newly opened screen (e.g. the product it opened).
+        fun effect(): String {
+            val after = svc.snapshot()
+            if (sig(after, c.app) == before) { dead.add(key); return "nothing changed" }
+            val head = after.visibleLabels(c.app, 40).filter { !Brain.idLike(it) && it.trim().split(' ').size >= 3 }.take(2)
+            // Buttons that stayed put but changed wording are the clearest sign an action took
+            // effect ("Add to Bag" -> "Go to Bag").
+            val prev = snap.appNodes(c.app).filter { it.clickable }.associateBy { it.bounds.flattenToString() }
+            val flips = after.appNodes(c.app).filter { it.clickable }.mapNotNull { n ->
+                val o = prev[n.bounds.flattenToString()] ?: return@mapNotNull null
+                val was = Brain.display(snap, o, 40)
+                val now = Brain.display(after, n, 40)
+                if (was.isNotEmpty() && now.isNotEmpty() && was != now) "\"$was\" now reads \"$now\"" else null
+            }.take(2)
+            val what = (if (head.isEmpty()) "" else " showing " + head.joinToString(", ") { "\"${it.take(60)}\"" }) +
+                (if (flips.isEmpty()) "" else "; " + flips.joinToString("; "))
+            return if (after.activity != snap.activity) "a new screen opened (${after.activity?.substringAfterLast('.') ?: "?"})$what"
+            else "the screen changed$what"
+        }
         when (d.action) {
             "tap" -> {
                 val n = d.node ?: return null
                 guardTap(snap, n)?.let { return it to true }
                 val ok = press(n)
                 svc.settle(400, 3000)
-                c.history.add("tapped \"${n.label.ifEmpty { snap.labelsIn(n, 1).firstOrNull() ?: n.shortId }}\"")
+                val what = Brain.display(snap, n, 50)
+                c.history.add("tapped ${if (what.isNotEmpty()) "\"$what\"" else "an unlabelled element"} to ${d.reason.take(60)} → ${effect()}")
                 return if (d.completesStep) StepResult(ok, if (ok) "success" else "failed", "llm", d.reason) to true
                 else StepResult(true, "success", "llm", d.reason) to false
             }
@@ -293,20 +360,61 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             "scroll_down", "scroll_up" -> {
                 scrollOnce(snap, c.app, forward = d.action == "scroll_down")
+                val e = effect()
+                c.history.add("${d.action.replace('_', ' ')} → ${if (e == "nothing changed") "nothing moved (this screen does not scroll)" else e}")
+                return StepResult(true, "success", "llm", d.reason) to false
+            }
+            "scroll_right", "scroll_left" -> {
+                // Sideways lists (sizes, colours, carousels): swipe inside the list's own row.
+                val list = d.node?.let { n -> generateSequence(n) { snap.parentOf(it) }.firstOrNull { it.scrollable } ?: n }
+                    ?: snap.appNodes(c.app).filter { it.scrollable && it.bounds.width() > it.bounds.height() * 3 }
+                        .maxByOrNull { it.bounds.width() }
+                val fwd = d.action == "scroll_right"
+                if (list != null) {
+                    val b = list.bounds
+                    val y = b.exactCenterY()
+                    val (x1, x2) = if (fwd) b.left + b.width() * 0.8f to b.left + b.width() * 0.2f else b.left + b.width() * 0.2f to b.left + b.width() * 0.8f
+                    if (!throughHud { Actions.swipe(svc, x1, y, x2, y, 350) }) Actions.scroll(list, fwd)
+                    svc.settle(350, 2000)
+                }
+                val e = if (list == null) "no sideways list found" else effect()
+                c.history.add("${d.action.replace('_', ' ')} → $e")
                 return StepResult(true, "success", "llm", d.reason) to false
             }
             "back" -> {
                 svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 svc.settle(400, 3000)
+                c.history.add("went back → ${effect()}")
                 return StepResult(true, "success", "llm", d.reason) to false
             }
-            "done" -> return StepResult(true, "success", "llm-done", d.reason) to true
+            "done" -> {
+                val proof = d.node?.let { Brain.display(snap, it, 60) }
+                Dbg.log("LLM done proof=${proof ?: "none"}")
+                if (strict && proof.isNullOrEmpty()) {
+                    // A "done" we are double-checking needs something on screen that shows it.
+                    c.history.add("said done but pointed at nothing on screen that proves it")
+                    return StepResult(true, "success", "llm", "unproven done") to false
+                }
+                return StepResult(true, "success", "llm-done", d.reason + (proof?.let { " (\"$it\")" } ?: "")) to true
+            }
             "ask" -> {
+                // Questions about finding things on screen are the assistant's job, not the user's.
+                val q = (d.question ?: "") + " " + d.reason
+                if (Regex("scroll|do you see|don.?t see|can.?t see|cannot see|not visible|should i (tap|open|go|scroll|look)", RegexOption.IGNORE_CASE).containsMatchIn(q)) {
+                    Dbg.log("LLM ask treated as scroll: ${d.question}")
+                    scrollOnce(snap, c.app, forward = true)
+                    val e = effect()
+                    c.history.add("scroll down → ${if (e == "nothing changed") "nothing moved (this screen does not scroll)" else e}")
+                    return StepResult(true, "success", "llm", "scrolled instead of asking") to false
+                }
                 if (c.asks >= 2) return StepResult(false, "asked", "llm", d.question ?: d.reason) to true
                 c.asks++
                 val ans = svc.asker.ask(d.question ?: "I'm stuck here. What should I do?")
                     ?: return StepResult(false, "asked", "ask", d.question ?: d.reason) to true
                 c.history.add("the user answered \"${d.question}\" with \"$ans\"")
+                val q2 = Text.norm(d.question ?: "")
+                c.slots[listOf("size", "colour", "color", "variant", "flavour", "address", "time").firstOrNull { q2.contains(it) } ?: "answer"] = ans
+                revealOption(ans, c)
                 return StepResult(true, "success", "ask", ans) to false
             }
             else -> return StepResult(false, "failed", "llm", d.reason.ifEmpty { "the assistant couldn't decide" }) to true
@@ -327,6 +435,36 @@ class Executor(private val svc: TvaAccessibilityService) {
     }
 
     /**
+     * After the user names an option ("9"), make sure it is visible: sideways option rows (sizes,
+     * colours) often continue off screen, and the model tends to give up on what it can't see.
+     */
+    private suspend fun revealOption(ans: String, c: Ctx) {
+        val a = Text.norm(ans)
+        if (a.isEmpty()) return
+        fun shown(s: Snapshot) = s.appNodes(c.app).any {
+            it.visible && it.label.isNotEmpty() && Text.norm(it.label).let { l -> l == a || (l.any(Char::isDigit) && l in a.split(' ')) }
+        }
+        repeat(4) {
+            val s = svc.snapshot()
+            if (shown(s)) return
+            val list = s.appNodes(c.app).filter { it.visible && it.scrollable && it.bounds.width() > it.bounds.height() * 3 }
+                .maxByOrNull { it.bounds.bottom } ?: return
+            val b = list.bounds
+            val y = b.exactCenterY()
+            throughHud { Actions.swipe(svc, b.left + b.width() * 0.8f, y, b.left + b.width() * 0.2f, y, 350) }
+            svc.settle(350, 2000)
+            if (sig(svc.snapshot(), c.app) == sig(s, c.app)) return
+            Dbg.log("revealOption: scrolled a sideways list looking for \"$ans\"")
+        }
+    }
+
+    /** Cheap fingerprint of what's on screen (screen name + visible labels and their positions). */
+    private fun sig(s: Snapshot, app: String): Int =
+        (s.activity + "|" + s.nodes.asSequence()
+            .filter { it.visible && it.label.isNotEmpty() && s.windows[it.window].pkg == app }
+            .take(40).joinToString("|") { "${it.normLabel}@${it.bounds.top / 8}" }).hashCode()
+
+    /**
      * Scrolls the page the way a thumb would: a vertical swipe through the middle of the screen. (The
      * "largest scrollable element" is often a horizontal image carousel, which an accessibility
      * scroll would move sideways.) Falls back to an accessibility scroll if the swipe can't be sent.
@@ -334,7 +472,7 @@ class Executor(private val svc: TvaAccessibilityService) {
     private suspend fun scrollOnce(snap: Snapshot, app: String, forward: Boolean): Boolean {
         val x = snap.screenW * 0.5f
         val (y1, y2) = if (forward) snap.screenH * 0.68f to snap.screenH * 0.32f else snap.screenH * 0.32f to snap.screenH * 0.68f
-        var ok = Actions.swipe(svc, x, y1, x, y2, 380)
+        var ok = throughHud { Actions.swipe(svc, x, y1, x, y2, 380) }
         if (!ok) ok = Resolver.mainScrollable(snap, app)?.let { Actions.scroll(it, forward) } ?: false
         svc.settle(350, 2000)
         return ok

@@ -70,6 +70,18 @@ class Hud(private val svc: AccessibilityService) {
 
     fun update(message: String) = main.post { label?.text = message }
 
+    /**
+     * Lets touches fall through the pill (while the assistant itself taps or swipes, so its own
+     * gesture can't land on the pill's Stop button when the target sits under it).
+     */
+    fun setTouchable(on: Boolean) = main.post {
+        val v = root ?: return@post
+        val lp = v.layoutParams as? WindowManager.LayoutParams ?: return@post
+        lp.flags = if (on) lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        else lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        runCatching { wm.updateViewLayout(v, lp) }
+    }
+
     fun hide() = main.post { removeNow() }
 
     private fun removeNow() {
