@@ -76,7 +76,7 @@ class TvaAccessibilityService : AccessibilityService() {
         getSharedPreferences("tva", MODE_PRIVATE).getString("fw_key", null)?.takeIf { it.isNotBlank() }?.let { Fireworks.key = it }
         val filter = IntentFilter().apply {
             listOf("TEACH_START", "TEACH_STOP", "TEACH_CANCEL", "RUN", "RUN_RECIPE", "STOP", "LIST", "DUMP",
-                "DELETE", "EXPLAIN", "ANSWER").forEach { addAction(DEV + it) }
+                "DELETE", "EXPLAIN", "ANSWER", "MATCH").forEach { addAction(DEV + it) }
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(devCommands, filter, Context.RECEIVER_EXPORTED)
         else registerReceiver(devCommands, filter)
@@ -169,44 +169,57 @@ class TvaAccessibilityService : AccessibilityService() {
 
     // ------------------------------------------------------------------ commands
 
+    /** What a command means: a status question, a learned flow with values, or nothing learned. */
+    class Resolution(val kind: String, val recipe: JSONObject?, val slots: Map<String, String>, val how: String,
+                     val otherApp: String?, val missing: List<String>, val ms: Long)
+
+    suspend fun resolveCommand(u: String): Resolution {
+        val t0 = System.currentTimeMillis()
+        fun done(kind: String, r: JSONObject? = null, s: Map<String, String> = emptyMap(), how: String = "", other: String? = null, missing: List<String> = emptyList()) =
+            Resolution(kind, r, s, how, other, missing, System.currentTimeMillis() - t0)
+        if (looksLikeStatusQuery(u)) return done("status", how = "keywords")
+        val recipes = store.recipes()
+        // 1. Same words as a taught command (or its template): no network needed.
+        Matcher.match(u, recipes)?.let { m -> return done("run", m.recipe, m.slots, m.how) }
+        // 2. Paraphrases, changed values, other apps, missing values: LLM.
+        val lm = if (recipes.isNotEmpty() && Fireworks.available) Brain.matchCommand(u, recipes) else null
+        if (lm?.statusQuery == true) return done("status", how = "llm")
+        val recipe = lm?.flowId?.let { id -> recipes.firstOrNull { it.optString("id") == id } }
+        if (recipe == null || lm.confidence < 0.5) return done("none", how = if (lm == null) "no-llm" else "llm")
+        val slots = HashMap(lm.slots)
+        // Optional goal slots (quantity, address) fall back to what was demonstrated.
+        recipe.optJSONArray("slots")?.let { a ->
+            for (i in 0 until a.length()) {
+                val s = a.getJSONObject(i)
+                if (!s.optBoolean("required", true) && !slots.containsKey(s.getString("name"))) slots[s.getString("name")] = s.optString("example")
+            }
+        }
+        val sameApp = lm.otherApp == null ||
+            Text.norm(lm.otherApp) == Text.norm(recipe.optString("appLabel")) ||
+            Text.fuzzyContains(recipe.optString("appLabel"), lm.otherApp)
+        val other = if (sameApp) null else findApp(lm.otherApp!!)?.takeIf { it != recipe.optString("app") }
+        return done("run", recipe, slots, "llm conf=${lm.confidence}", other, lm.missing)
+    }
+
     /** Handles a spoken or typed command: answer a status question, run a learned flow, or offer to learn it. */
     fun handleUtterance(utterance: String) {
         scope.launch {
             val u = utterance.trim()
             if (u.isEmpty()) return@launch
             Dbg.log("UTTERANCE \"$u\"")
-            if (looksLikeStatusQuery(u)) { answerStatus(); return@launch }
-            val recipes = store.recipes()
-            // 1. Same words as a taught command (or its template): no network needed.
-            Matcher.match(u, recipes)?.let { m ->
-                Dbg.log("MATCH \"$u\" -> ${m.recipe.optString("id")} (${m.how}) ${m.slots}")
-                executor.start(m.recipe, m.slots, u)
-                return@launch
-            }
-            // 2. Paraphrases, changed values, other apps, missing values: LLM.
-            val lm = if (recipes.isNotEmpty() && Fireworks.available) Brain.matchCommand(u, recipes) else null
-            if (lm?.statusQuery == true) { answerStatus(); return@launch }
-            val recipe = lm?.flowId?.let { id -> recipes.firstOrNull { it.optString("id") == id } }
-            if (recipe != null && lm.confidence >= 0.5) {
-                val slots = HashMap(lm.slots)
-                // Optional goal slots fall back to what was demonstrated.
-                recipe.optJSONArray("slots")?.let { a ->
-                    for (i in 0 until a.length()) {
-                        val s = a.getJSONObject(i)
-                        if (!s.optBoolean("required", true) && !slots.containsKey(s.getString("name"))) slots[s.getString("name")] = s.optString("example")
-                    }
+            val r = resolveCommand(u)
+            when (r.kind) {
+                "status" -> answerStatus()
+                "run" -> {
+                    Dbg.log("MATCH \"$u\" -> ${r.recipe!!.optString("id")} (${r.how}) ${r.slots} missing=${r.missing} app=${r.otherApp ?: "-"}")
+                    executor.start(r.recipe, r.slots, u, r.otherApp)
                 }
-                val sameApp = lm.otherApp == null ||
-                    Text.norm(lm.otherApp) == Text.norm(recipe.optString("appLabel")) ||
-                    Text.fuzzyContains(recipe.optString("appLabel"), lm.otherApp)
-                val other = if (sameApp) null else findApp(lm.otherApp!!)?.takeIf { it != recipe.optString("app") }
-                Dbg.log("LLM_MATCH \"$u\" -> ${recipe.optString("id")} conf=${lm.confidence} slots=$slots missing=${lm.missing} app=${other ?: "-"}")
-                executor.start(recipe, slots, u, other)
-                return@launch
+                else -> {
+                    Dbg.log("NO_MATCH \"$u\"")
+                    say("I haven't learned that yet. Do you want to teach me?")
+                    hud.show("Not learned yet: \"$u\"", listOf("Teach it" to { startTeaching(u) }, "No" to { hud.hide() }), autoHideMs = 15000)
+                }
             }
-            Dbg.log("NO_MATCH \"$u\"")
-            say("I haven't learned that yet. Do you want to teach me?")
-            hud.show("Not learned yet: \"$u\"", listOf("Teach it" to { startTeaching(u) }, "No" to { hud.hide() }), autoHideMs = 15000)
         }
     }
 
@@ -253,6 +266,17 @@ class TvaAccessibilityService : AccessibilityService() {
                 "TEACH_CANCEL" -> recorder.stop(save = false)
                 "RUN" -> handleUtterance(intent.getStringExtra("utterance") ?: "")
                 "ANSWER" -> asker.answer(intent.getStringExtra("text"))
+                "MATCH" -> {
+                    val u = intent.getStringExtra("utterance") ?: ""
+                    val tag = intent.getStringExtra("tag") ?: ""
+                    scope.launch {
+                        val r = resolveCommand(u)
+                        Dbg.log("MATCHRESULT " + JSONObject().put("tag", tag).put("utterance", u).put("kind", r.kind)
+                            .put("recipe", r.recipe?.optString("id") ?: "").put("recipeApp", r.recipe?.optString("appLabel") ?: "")
+                            .put("slots", JSONObject(r.slots as Map<*, *>))
+                            .put("missing", org.json.JSONArray(r.missing)).put("how", r.how).put("app", r.otherApp ?: "").put("ms", r.ms))
+                    }
+                }
                 "RUN_RECIPE" -> store.recipe(intent.getStringExtra("id") ?: "")?.let { r ->
                     val slots = Matcher.examples(r).toMutableMap()
                     intent.getStringExtra("slots")?.let { s -> JSONObject(s).let { j -> j.keys().forEach { k -> slots[k] = j.getString(k) } } }

@@ -1,0 +1,20 @@
+PASS  Search for wireless earbuds on Amazon and add the first resu  exact
+PASS  search for phone case on amazon and add the first result to   template
+PASS  add wireless earbuds to my amazon cart                        llm conf=1.0
+PASS  put a phone cover in my amazon cart                           llm conf=1.0
+PASS  find a usb c charger on amazon and add it to the cart         llm conf=0.99
+PASS  amazon pe bluetooth speaker cart mein daal do                 llm conf=0.99
+PASS  I need a laptop stand, add the top result on Amazon to my ca  llm conf=0.99
+PASS  get me some AAA batteries on amazon                           llm conf=0.99
+PASS  look up a yoga mat on amazon and put the first one in my car  llm conf=1.0
+PASS  add two packs of green tea to my amazon cart                  llm conf=0.99
+PASS  can you add a mouse pad on amazon                             llm conf=1.0
+PASS  shop for a steel water bottle on amazon                       llm conf=1.0
+PASS  book a cab to the airport                                     llm
+PASS  send hi to mom on whatsapp                                    llm
+PASS  set an alarm for 6 am                                         llm
+PASS  play some lo-fi music on spotify                              llm
+PASS  did the last run succeed?                                     keywords
+PASS  did that work?                                                keywords
+
+Match accuracy: 18/18 = 100%   median latency: 1120 ms
