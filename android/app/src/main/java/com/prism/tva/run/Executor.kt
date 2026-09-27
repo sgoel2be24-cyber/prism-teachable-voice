@@ -243,12 +243,13 @@ class Executor(private val svc: TvaAccessibilityService) {
     private suspend fun tap(st: JSONObject, c: Ctx): StepResult {
         var start = System.currentTimeMillis()
         var scrolls = 0
+        var preScrolls = 0
         var llmActs = 0
         var method = "match"
         var checks = 0 // times we re-checked an LLM "this finishes the step" claim on the resulting screen
         var verifying = false
         while (true) {
-            svc.settle(400, 4000)
+            svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
             guardScreen(snap, c.app)?.let { return it }
             if (verifying) {
@@ -280,6 +281,15 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             val elapsed = System.currentTimeMillis() - start
             if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
+            // Cheap before clever: the element is often just below the fold (a sponsored banner
+            // pushed the first result down). Up to three thumb scrolls with the fast matcher, then the LLM.
+            if (preScrolls < 3 && !c.cross) {
+                val s0 = sig(snap, c.app)
+                scrollOnce(snap, c.app, forward = true)
+                preScrolls++
+                if (sig(svc.snapshot(), c.app) == s0) preScrolls = 3 else scrolls++ // screen doesn't scroll
+                continue
+            }
             // Fast path found nothing clear: let the LLM look at the screen. A stuck step is reported
             // within 30 s rather than guessing on (e.g. an app switched to another language).
             // In another app every screen is new, so the LLM gets a bigger budget there.
@@ -471,7 +481,7 @@ class Executor(private val svc: TvaAccessibilityService) {
      */
     private suspend fun scrollOnce(snap: Snapshot, app: String, forward: Boolean): Boolean {
         val x = snap.screenW * 0.5f
-        val (y1, y2) = if (forward) snap.screenH * 0.68f to snap.screenH * 0.32f else snap.screenH * 0.32f to snap.screenH * 0.68f
+        val (y1, y2) = if (forward) snap.screenH * 0.74f to snap.screenH * 0.26f else snap.screenH * 0.26f to snap.screenH * 0.74f
         var ok = throughHud { Actions.swipe(svc, x, y1, x, y2, 380) }
         if (!ok) ok = Resolver.mainScrollable(snap, app)?.let { Actions.scroll(it, forward) } ?: false
         svc.settle(350, 2000)
