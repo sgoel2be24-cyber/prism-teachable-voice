@@ -64,6 +64,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(d(18f), d(28f), d(18f), d(24f))
             addView(title); addView(status); addView(speakBtn); addView(teachBtn); addView(heard); addView(typed); addView(list)
+            addView(keySettings())
         }
         setContentView(ScrollView(this).apply { addView(col) })
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -220,6 +221,38 @@ class MainActivity : Activity() {
             setOnClickListener { TvaAccessibilityService.instance?.store?.deleteRecipe(r.getString("id")); render() }
         })
         return card
+    }
+
+    /** Optional: use a different Fireworks key than the one built into the app. */
+    private fun keySettings(): View {
+        val prefs = getSharedPreferences("tva", MODE_PRIVATE)
+        val field = EditText(this).apply {
+            hint = "Paste a Fireworks API key (optional)"
+            textSize = 13f
+            setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            if (!prefs.getString("fw_key", null).isNullOrBlank()) setText(prefs.getString("fw_key", ""))
+        }
+        val save = Button(this).apply {
+            text = "Save"; isAllCaps = false
+            setOnClickListener {
+                val k = field.text.toString().trim()
+                prefs.edit().putString("fw_key", k).apply()
+                Fireworks.key = k.ifEmpty { BuildConfig.FW_KEY }
+                render()
+            }
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(section("Language model"))
+            addView(note(if (BuildConfig.FW_KEY.isNotBlank()) "A key is built into this app. Paste another one to use it instead; leave empty to use the built-in key."
+                else "No key is built in. Paste a Fireworks API key to enable paraphrases, pop-up handling and questions."))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(field, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(save)
+            })
+        }
     }
 
     private fun section(t: String) = TextView(this).apply {

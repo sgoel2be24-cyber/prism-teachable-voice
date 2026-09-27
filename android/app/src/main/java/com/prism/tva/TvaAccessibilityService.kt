@@ -76,7 +76,7 @@ class TvaAccessibilityService : AccessibilityService() {
         getSharedPreferences("tva", MODE_PRIVATE).getString("fw_key", null)?.takeIf { it.isNotBlank() }?.let { Fireworks.key = it }
         val filter = IntentFilter().apply {
             listOf("TEACH_START", "TEACH_STOP", "TEACH_CANCEL", "RUN", "RUN_RECIPE", "STOP", "LIST", "DUMP",
-                "DELETE", "EXPLAIN", "ANSWER", "MATCH").forEach { addAction(DEV + it) }
+                "DELETE", "EXPLAIN", "ANSWER", "MATCH", "GUARD").forEach { addAction(DEV + it) }
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(devCommands, filter, Context.RECEIVER_EXPORTED)
         else registerReceiver(devCommands, filter)
@@ -292,6 +292,10 @@ class TvaAccessibilityService : AccessibilityService() {
                         Dbg.log("  %.2f %s [%s] '%s' %s :: %s".format(m.score, m.node.shortCls, m.node.shortId,
                             (m.node.label.ifEmpty { snap.labelsIn(m.node, 1).firstOrNull() ?: "" }).take(50), m.node.bounds.toShortString(), m.why))
                     }
+                }
+                "GUARD" -> {
+                    val s = snapshot()
+                    Dbg.log("GUARD app=${s.appPkg} screen=${com.prism.tva.core.Guard.screenBlock(s, s.appPkg) ?: "clear"}")
                 }
                 "DELETE" -> store.deleteRecipe(intent.getStringExtra("id") ?: "")
                 "LIST" -> store.recipes().forEach { r ->

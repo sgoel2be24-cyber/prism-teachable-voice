@@ -13,10 +13,14 @@ object Guard {
         " complete payment", " slide to pay", " swipe to pay", " pay using", " checkout ",
     )
 
-    /** Words that, two or more together, mark a payment-method screen. */
+    /**
+     * Phrases that, two or more together, mark a payment-method screen. Deliberately specific: product
+     * pages also mention "EMI", "credit card" and "UPI" in their offers.
+     */
     private val PAY_SCREEN = listOf(
-        "upi", "net banking", "netbanking", "credit card", "debit card", "select payment", "payment method",
-        "payment options", "cvv", "card number", "wallets", "cash on delivery", "pay on delivery", "emi",
+        "upi id", "enter upi", "net banking", "netbanking", "select a payment method", "choose a payment method",
+        "select payment method", "payment options", "cvv", "card number", "expiry date", "name on card",
+        "wallets", "cash on delivery", "pay on delivery", "add new card", "saved cards",
     )
 
     /** Hints or labels of text fields that ask for credentials. */
