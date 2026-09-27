@@ -1,0 +1,19 @@
+# Personal data and secrets: never commit.
+# Raw screen captures contain saved addresses and phone numbers.
+recon/*/
+recon/*.log
+recon/.capture.pid
+.fireworks_key
+*.key
+*.jks
+*.keystore
+android/local.properties
+
+# Build output
+android/.gradle/
+android/build/
+android/app/build/
+android/build.log
+.idea/
+*.iml
+.DS_Store

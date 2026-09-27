@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Teach Spike</string>
+    <string name="service_label">Teach Spike recorder</string>
+    <string name="service_description">Development build: logs screen events and runs test commands so we can learn how apps expose their screens.</string>
+</resources>
