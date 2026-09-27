@@ -34,8 +34,22 @@ object Resolver {
             it !== top && !isAncestor(snap, it.node, top.node) && !isAncestor(snap, top.node, it.node)
         }?.score ?: -99.0
         val clear = top.score - second >= 0.5 || top.score >= 6.5
-        if (top.score < 3.0 || !clear) return null
-        return Match(top.node, top.score, second, top.why)
+        if (top.score >= 3.0 && clear) return Match(top.node, top.score, second, top.why)
+        // Several identical elements ("Add to cart" on every result): take the one in the same position
+        // among its twins as in the demonstration (top-to-bottom), i.e. "the first result".
+        val t = step.optJSONObject("target")
+        val twinIndex = t?.optInt("similarIndex", -1) ?: -1
+        if (top.score >= 3.0 && twinIndex >= 0) {
+            val key = Text.stable(top.node.label.ifEmpty { snap.labelsIn(top.node, 1).firstOrNull() ?: "" })
+            val twins = ranked.filter { it.score >= top.score - 0.6 &&
+                Text.stable(it.node.label.ifEmpty { snap.labelsIn(it.node, 1).firstOrNull() ?: "" }) == key }
+                .sortedWith(compareBy({ it.node.bounds.top }, { it.node.bounds.left }))
+            if (twins.size >= 2) {
+                val pick = twins[minOf(twinIndex, twins.size - 1)]
+                return Match(pick.node, pick.score, second, pick.why + " twin#$twinIndex")
+            }
+        }
+        return null
     }
 
     private fun isAncestor(snap: Snapshot, a: UiNode, b: UiNode): Boolean {
@@ -117,7 +131,9 @@ object Resolver {
             if (anchorSlotValue.isNotEmpty() || anchorLiteral.isNotEmpty()) {
                 val row = snap.rowLabels(a) + labels
                 if (anchorSlotValue.isNotEmpty()) {
-                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) }) { s += 4.0; why.append("anchor ") } else s -= 4.0
+                    val soft = step.optBoolean("anchorSoft")
+                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) }) { s += if (soft) 2.0 else 4.0; why.append("anchor ") }
+                    else s -= if (soft) 0.5 else 4.0
                 } else {
                     if (row.any { Text.fuzzyContains(it, anchorLiteral) }) { s += 2.0; why.append("anchorLit ") } else s -= 0.5
                 }

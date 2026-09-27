@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Fireworks API key for development builds: read from the (git-ignored) key file at the repo root.
+val fwKey: String = rootProject.file("../.fireworks_key").takeIf { it.exists() }?.readText()?.trim() ?: ""
+
 android {
     namespace = "com.prism.tva"
     compileSdk = 35
@@ -12,7 +15,8 @@ android {
         minSdk = 28
         targetSdk = 35
         versionCode = 2
-        versionName = "0.2"
+        versionName = "0.3"
+        buildConfigField("String", "FW_KEY", "\"$fwKey\"")
     }
 
     buildFeatures {

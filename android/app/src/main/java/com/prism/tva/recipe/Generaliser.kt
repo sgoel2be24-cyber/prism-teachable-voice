@@ -113,7 +113,15 @@ object Generaliser {
                                 .sortedBy { it.end - it.start }
                                 .firstOrNull { sp -> row.any { Text.fuzzyContains(it, sp.text) } }
                                 ?.let { slotFor(it, "item") }
-                        if (anchorSlot != null) out.put("anchorSlot", anchorSlot.name)
+                        if (anchorSlot != null) {
+                            out.put("anchorSlot", anchorSlot.name)
+                            // A value the user searched for: results needn't repeat the words, so the
+                            // card match only nudges. A value picked from a list must match.
+                            val searched = (0 until steps.length()).any { k ->
+                                steps.getJSONObject(k).let { it.optString("kind") == "type" && it.optString("textSlot") == anchorSlot.name }
+                            }
+                            if (searched) out.put("anchorSoft", true)
+                        }
                         else if (row.isNotEmpty() && t.optString("leafLabel").length <= 14) {
                             // Short/generic button ("ADD", "+"): remember the card it sat in.
                             row.firstOrNull { l -> l.any { it.isLetter() } && Text.stable(l).length >= 3 }
