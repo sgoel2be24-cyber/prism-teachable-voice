@@ -177,16 +177,18 @@ class Executor(private val svc: TvaAccessibilityService) {
             outcome = "failed"; reason = e.toString()
             Dbg.log("RUN_ERROR $e")
         }
+        // Values asked for mid-run are known now: name the task with them ("Add margherita pizza…").
+        val done = fill(recipe.optString("description").ifEmpty { recipe.optString("name") }, slots).ifEmpty { c.task }
         val rec = JSONObject()
             .put("id", runId).put("utterance", utterance)
-            .put("recipe", recipe.optString("id")).put("recipeName", c.task)
+            .put("recipe", recipe.optString("id")).put("recipeName", done)
             .put("app", app).put("slots", JSONObject(slots as Map<*, *>)).put("outcome", outcome).put("reason", reason)
             .put("stoppedAt", stoppedAt).put("stepCount", steps.length()).put("llmCalls", c.llmCalls)
             .put("startedAt", t0).put("ms", System.currentTimeMillis() - t0).put("steps", log)
         withContext(NonCancellable) {
             svc.store.appendRun(rec)
             val msg = when (outcome) {
-                "success" -> "Done: ${c.task}. Please review it and complete the payment yourself."
+                "success" -> "Done: $done. Please review it and complete the payment yourself."
                 "handover" -> "I've stopped at $reason. Your turn."
                 "stopped" -> "Stopped."
                 "asked" -> "I've paused: $reason."

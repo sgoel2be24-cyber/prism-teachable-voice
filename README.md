@@ -25,8 +25,9 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 | Learn success (teach once, replay once with a new value; one demo with an app-switch detour) | 4/4 |
 | Command understanding (Amazon test set) | 18/18, median 1.1 s |
 | Cross-app: taught on Amazon, run on Myntra | 3/3 (52–64 s; asks for size) |
+| Zomato, taught once by hand (with a mis-tap and a pop-up in the demo): exact, paraphrase, new pizza, two pizzas, deliver to Work, "order something" | 6/6, 29–78 s, 35/38 steps without the language model |
 
-Tables and method: [docs/eval-replay-sessions-2026-09-28.md](docs/eval-replay-sessions-2026-09-28.md)
+Tables and method: [docs/eval-replay-sessions-2026-09-28.md](docs/eval-replay-sessions-2026-09-28.md) · [docs/eval-zomato-2026-09-28.md](docs/eval-zomato-2026-09-28.md)
 
 Details: [docs/architecture.md](docs/architecture.md) · recon of the target apps: [docs/recon-zomato.md](docs/recon-zomato.md) · recording/replay study: [docs/spike-results.md](docs/spike-results.md)
 
