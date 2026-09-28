@@ -39,6 +39,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         private val DISMISS = setOf("got it", "ok", "okay", "close", "not now", "skip", "cancel", "later", "maybe later",
             "no thanks", "dismiss", "x", "understood", "continue shopping")
         private val ADDISH = Regex("add to (cart|bag|basket)|^add( item)?\\b", RegexOption.IGNORE_CASE)
+        private val PRICE = Regex("[₹$€£]\\s?\\d")
         private val CART_COUNT = listOf(
             Regex("^(?:cart|bag|basket)\\W+(\\d+) items?\\b", RegexOption.IGNORE_CASE),
             Regex("^(\\d+) items? (?:added|in (?:your )?(?:cart|bag))", RegexOption.IGNORE_CASE),
@@ -69,6 +70,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         var alreadyHad: Boolean = false, // the last add step found the item already in the cart
         var next: JSONObject? = null, // the step after the current one, to recognise its screen
         var cartBefore: Int? = null, // cart count just before the last "Add to cart" press
+        var addStep: Boolean = false, // the current step adds something to the cart/bag
+        var lastTap: String = "", // what the model tapped last (to stop it unselecting a size)
+        var cartSeen: Int? = null, // last cart count seen in this step (a size sheet hides the bag icon)
     )
 
     @Volatile private var job: Job? = null
@@ -86,6 +90,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         slots.forEach { (k, v) -> s = s.replace("{$k}", v) }
         return s.replace(Regex("\\{[a-z0-9_]+\\}"), "").replace(Regex("\\s+"), " ").trim()
     }
+
+    /** "Which size?" stays as it is; "no network" becomes "no network." */
+    private fun endSentence(s: String): String = s.trim().let { if (it.isEmpty() || it.last() in ".?!") it else "$it." }
 
     private fun stepText(st: JSONObject, c: Ctx): String {
         val intent = st.optString("intent")
@@ -224,7 +231,17 @@ class Executor(private val svc: TvaAccessibilityService) {
             Dbg.log("RUN_ERROR $e")
         }
         // Values asked for mid-run are known now: name the task with them ("Add margherita pizza…").
-        val done = fill(recipe.optString("description").ifEmpty { recipe.optString("name") }, slots).ifEmpty { c.task }
+        var done = fill(recipe.optString("description").ifEmpty { recipe.optString("name") }, slots).ifEmpty { c.task }
+        // Run in a different app than the one taught: name the app it actually ran in.
+        val taughtApp = recipe.optString("app")
+        if (app != taughtApp) {
+            val was = Actions.appLabel(svc, taughtApp)
+            val now = Actions.appLabel(svc, app)
+            // "Amazon Shopping" is usually just "Amazon" in the description.
+            listOf(was, was.substringBefore(' ')).filter { it.length >= 4 && it != taughtApp }.firstOrNull { w ->
+                Regex("\\b${Regex.escape(w)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(done)
+            }?.let { w -> done = done.replace(Regex("\\b${Regex.escape(w)}\\b", RegexOption.IGNORE_CASE), now) }
+        }
         val rec = JSONObject()
             .put("id", runId).put("utterance", utterance)
             .put("recipe", recipe.optString("id")).put("recipeName", done)
@@ -241,8 +258,8 @@ class Executor(private val svc: TvaAccessibilityService) {
                     else -> "I've stopped at $reason. Your turn."
                 }
                 "stopped" -> "Stopped."
-                "asked" -> "I've paused: $reason."
-                else -> "I couldn't finish: $reason."
+                "asked" -> "I've paused: ${endSentence(reason)}"
+                else -> "I couldn't finish: ${endSentence(reason)}"
             }
             svc.speaker.say(msg)
             svc.hud.show(msg, listOf("OK" to { svc.hud.hide() }), autoHideMs = 9000)
@@ -279,6 +296,9 @@ class Executor(private val svc: TvaAccessibilityService) {
                 // The model finished an add step without pressing anything: it found the item already
                 // in the cart. Then the next step's options sheet ("Add item") won't appear either.
                 if (st.optString("anchorSlot").isNotEmpty() && r.method == "llm-done" && c.llmTapped.isEmpty()) c.alreadyHad = true
+                // The model finished an add step (the bag count went up, or it showed "in your bag"):
+                // a following "confirm adding" step whose button isn't there has nothing left to do.
+                if (c.addStep && r.ok && r.method in setOf("llm-done", "llm-added")) c.alreadyHad = true
             }
             "type" -> type(st, c)
             else -> StepResult(true, "success", "skip", "unknown kind ${st.optString("kind")}")
@@ -330,6 +350,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         var scrolls = 0
         var preScrolls = 0
         var pageSearched = false
+        var openedFirst = false // opened the first (non-advert) result ourselves
+        var adScrolls = 0
+        var adsSeen = 0
         var llmActs = 0
         var method = "match"
         var checks = 0 // times we re-checked an LLM "this finishes the step" claim on the resulting screen
@@ -341,6 +364,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         // "confirm" step (the product page's own add button) has nothing left to do.
         val cartBefore = c.cartBefore
         c.cartBefore = null
+        c.addStep = st.optJSONObject("target")?.let { t -> ADDISH.containsMatchIn(t.optString("leafLabel").ifEmpty { t.optString("label") }) } == true ||
+            Regex("\\badd\\b.*\\b(cart|bag|basket)\\b", RegexOption.IGNORE_CASE).containsMatchIn(st.optString("intent"))
+        c.cartSeen = null
         while (true) {
             svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
@@ -353,6 +379,12 @@ class Executor(private val svc: TvaAccessibilityService) {
                 // The screen moved on and the next step's button is plainly there: this step did its
                 // job. (Asked instead, the model tends to carry on with the following steps itself.)
                 val nx = c.next
+                // The next step types: a focused text box on a new screen means this one opened it.
+                if (nx != null && nx.optString("kind") == "type" && sig(snap, c.app) != startSig &&
+                    snap.appNodes(c.app).any { it.editable && it.focused }) {
+                    Dbg.log("VERIFY the text box for the next step is open")
+                    return StepResult(true, "success", "llm", "the text box is open")
+                }
                 // (Not when this step's own button is still there too: "Tap dominos" then "Tap dominos".)
                 if (nx != null && nx.optString("kind") in setOf("tap", "longpress") && sig(snap, c.app) != startSig) {
                     val m = Resolver.resolve(nx, c.slots, snap, c.app)
@@ -407,8 +439,9 @@ class Executor(private val svc: TvaAccessibilityService) {
                 // Zomato ignores accessibility clicks on some views (its "Continue" bar, the
                 // location bar). If nothing at all changed, tap it for real, like a finger.
                 if (!long && same(snap, svc.snapshot(), c.app)) {
-                    val cx = m.node.bounds.exactCenterX(); val cy = m.node.bounds.exactCenterY()
-                    if (m.node.bounds.width() > 0 && cy in 0f..snap.screenH.toFloat()) {
+                    val pt = snap.tapPoint(m.node)
+                    if (pt != null) {
+                        val (cx, cy) = pt
                         Dbg.log("TAP no visible effect; tapping for real")
                         ok = throughHud { Actions.tap(svc, cx, cy, false) } || ok
                         svc.settle(350, 3000)
@@ -489,6 +522,37 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (st.optInt("scrollsBefore") >= 8 && !pageSearched && anchorValue.isNotEmpty() && !c.cross) {
                 pageSearched = true
                 if (searchInPage(snap, anchorValue, c)) continue
+            }
+            // In another app, "add the first result" on a results grid whose cards have no add button
+            // (Myntra): open the first result that isn't an advert ourselves, then the model adds it
+            // from its page. Left alone, the model tapped the search text or scrolled for a button.
+            if (c.cross && c.addStep && !openedFirst && llmActs == 0 &&
+                Regex("\\b(first|top)\\b", RegexOption.IGNORE_CASE).containsMatchIn(st.optString("intent"))) {
+                val (card, ads) = firstResultCard(snap, c.app)
+                if (card != null) {
+                    openedFirst = true
+                    guardTap(snap, card)?.let { return it }
+                    // Its words, not the app's test ids ("touchable_info").
+                    val name = snap.labelsIn(card, 8).filterNot { Regex("^[A-Za-z0-9]+(_[A-Za-z0-9]+)+$").matches(it) }
+                        .take(3).joinToString(" · ").take(70)
+                    val (x, y) = snap.tapPoint(card)!!
+                    Dbg.log("OPEN the first result that isn't an advert (${adsSeen + ads} adverts skipped): $name")
+                    val s0 = sig(snap, c.app)
+                    throughHud { Actions.tap(svc, x, y, false) }
+                    // Wait for the product page itself, not the list mid-transition.
+                    val until = System.currentTimeMillis() + 5000
+                    while (System.currentTimeMillis() < until && sig(svc.snapshot(), c.app) == s0) delay(300)
+                    svc.settle(700, 4000)
+                    c.history.add("opened the first result that isn't an advert (\"$name\"); add this one from its page")
+                    continue
+                }
+                if (ads > 0 && adScrolls < 3) {
+                    adScrolls++
+                    adsSeen += ads
+                    Dbg.log("OPEN only adverts in view ($ads); scrolling")
+                    scrollOnce(snap, c.app, forward = true)
+                    continue
+                }
             }
             // Fast path found nothing clear: let the LLM look at the screen. A stuck step is reported
             // within 30 s rather than guessing on (e.g. an app switched to another language).
@@ -573,24 +637,52 @@ class Executor(private val svc: TvaAccessibilityService) {
             "tap" -> {
                 val n = d.node ?: return null
                 guardTap(snap, n)?.let { return it to true }
+                // A size just chosen may not report itself as selected (Myntra), so the model taps it
+                // again and unselects it. Once is enough: the next move is the sheet's DONE / add button.
+                val shownNow = Brain.display(snap, n, 50)
+                if (c.lastTap.isNotEmpty() && Text.stable(shownNow) == c.lastTap &&
+                    Regex("size|^(\\d{1,2}(\\.5)?|xs|s|m|l|xl|xxl|xxxl|free size|onesize|done|add to bag|add to cart)\\b", RegexOption.IGNORE_CASE).containsMatchIn(shownNow)) {
+                    c.history.add("\"$shownNow\" was just pressed (pressing it again would unselect the option or add a second one); look for what it did, e.g. the bag count or a DONE / Go to bag button")
+                    Dbg.log("LLM repeat option tap blocked: $shownNow")
+                    return StepResult(true, "success", "llm", "option already chosen") to false
+                }
+                // While picking "the first result", an advert tile is never the one (Myntra marks them "AD").
+                if (c.addStep && Resolver.sponsored(snap, n)) {
+                    c.history.add("\"${shownNow.take(50)}\" is an advert (AD / Sponsored); the first result means the first one that isn't an advert")
+                    Dbg.log("LLM tap on an advert blocked: $shownNow")
+                    return StepResult(true, "success", "llm", "skipped an advert") to false
+                }
+                c.lastTap = Text.stable(shownNow)
                 // Tap like a finger where the model pointed: some apps accept an accessibility click
                 // and ignore it (Zomato's location bar). Off-screen or under the keyboard: click.
-                val cx = n.bounds.exactCenterX()
-                val cy = n.bounds.exactCenterY()
-                val reachable = n.bounds.width() > 0 && cx in 0f..snap.screenW.toFloat() && cy in 0f..snap.screenH.toFloat() &&
-                    (snap.imeTop() < 0 || cy < snap.imeTop())
-                val addish = ADDISH.containsMatchIn(Brain.display(snap, n, 50).ifEmpty { n.label })
-                val cartThen = if (addish) cartCount(snap, c.app) else null
+                // The spot is the free part of the element: a sticky header can cover its centre.
+                val pt = snap.tapPoint(n)
+                val (cx, cy) = pt ?: (0f to 0f)
+                val reachable = pt != null
+                if (pt == null && !snap.actionable(n).clickable) {
+                    c.history.add("\"${shownNow.take(50)}\" is hidden under the page's header, the keyboard or the screen edge; scroll a little to bring it into view, or pick one that's in view")
+                    Dbg.log("TAP target covered: $shownNow")
+                    return StepResult(true, "success", "llm", "target covered") to false
+                }
+                Dbg.log("TAP llm #${n.idx} ${n.shortCls} [${n.bounds.toShortString()}] at ${pt?.let { "(${it.first.toInt()},${it.second.toInt()})" } ?: "none"} clickable=${n.clickable} ad=${if (c.addStep) Resolver.sponsored(snap, n) else "-"}")
+                // In an add step every tap is watched: on Myntra the item goes in on the size sheet's
+                // "DONE", not on "Add to Bag".
+                val labelAddish = ADDISH.containsMatchIn(Brain.display(snap, n, 50).ifEmpty { n.label }) ||
+                    Regex("^(done|confirm|add item|add to bag)\\b", RegexOption.IGNORE_CASE).containsMatchIn(Brain.display(snap, n, 50))
+                val addish = labelAddish || c.addStep
+                // A size sheet covers the bag icon: compare with the count seen before it opened.
+                val cartThen = if (addish) (cartCount(snap, c.app)?.also { c.cartSeen = it } ?: c.cartSeen) else null
                 if (addish && c.cartBefore == null) c.cartBefore = cartThen ?: 0
                 var ok = reachable && throughHud { Actions.tap(svc, cx, cy, false) }
-                if (!ok) ok = press(n)
+                if (!ok) ok = press(if (pt == null) snap.actionable(n) else n)
                 svc.settle(400, 3000)
                 val what = Brain.display(snap, n, 50)
                 // One "Add to cart" that raised the cart count is the whole job: never let the model
                 // go on to add a second product (it once added three before noticing).
                 if (addish && ok && cartThen != null) {
                     var now: Int? = null
-                    for (i in 0 until 5) { now = cartCount(svc.snapshot(), c.app); if (now != null && now > cartThen) break; delay(500) }
+                    for (i in 0 until (if (labelAddish) 6 else 1)) { now = cartCount(svc.snapshot(), c.app); if (now != null && now > cartThen) break; delay(500) }
+                    if (now != null && now < cartThen) c.cartSeen = now
                     if (now != null && now > cartThen) {
                         c.llmTapped.add(Text.stable(what))
                         c.history.add("tapped \"$what\" → added to the cart (cart $cartThen → $now)")
@@ -641,8 +733,10 @@ class Executor(private val svc: TvaAccessibilityService) {
                 return StepResult(true, "success", "llm", d.reason) to false
             }
             "done" -> {
-                // Text in a search box is what we typed, not evidence that anything happened.
-                val proof = d.node?.takeIf { !it.editable }?.let { Brain.display(snap, it, 60) }
+                // Text in a search box is what we typed, not evidence that anything happened — unless
+                // the step was to open that box (the next step types into it).
+                val boxWasTheGoal = c.next?.optString("kind") == "type"
+                val proof = d.node?.takeIf { !it.editable || boxWasTheGoal }?.let { Brain.display(snap, it, 60).ifEmpty { "the text box" } }
                 Dbg.log("LLM done proof=${proof ?: "none"}")
                 if (strict && proof.isNullOrEmpty()) {
                     // A "done" we are double-checking needs something on screen that shows it.
@@ -756,11 +850,65 @@ class Executor(private val svc: TvaAccessibilityService) {
         return true
     }
 
+    /**
+     * The first product card on a results grid that isn't an advert, and how many advert cards came
+     * before it. A product card is a clickable box with a price in it that repeats (at least two on
+     * screen) and isn't the whole page. Only for grids without their own add buttons.
+     */
+    private fun firstResultCard(s: Snapshot, app: String): Pair<UiNode?, Int> {
+        val nodes = s.appNodes(app)
+        if (nodes.any { ADDISH.containsMatchIn(it.label) }) return null to 0
+        val screen = s.screenW.toLong() * s.screenH
+        fun area(n: UiNode) = n.bounds.width().toLong() * n.bounds.height()
+        fun inside(n: UiNode, anc: UiNode): Boolean {
+            var p = s.parentOf(n); var hops = 0
+            while (p != null && hops++ < 40) { if (p.idx == anc.idx) return true; p = s.parentOf(p) }
+            return false
+        }
+        val priced = nodes.filter { n ->
+            n.clickable && n.bounds.width() > 0 && n.bounds.height() > 0 && area(n) in (screen / 80)..(screen / 3) &&
+                s.subtree(n).any { it.visible && PRICE.containsMatchIn(it.label) }
+        }
+        val cards = priced.filter { a -> priced.none { b -> b !== a && inside(b, a) } }
+        if (cards.size < 2) return null to 0
+        // The whole card: the largest box around it that holds no other card (so the "AD" tag on its
+        // picture is found too).
+        fun whole(n: UiNode): UiNode {
+            var cur = n
+            while (true) {
+                val p = s.parentOf(cur) ?: return cur
+                if (area(p) > screen / 2 || cards.any { it !== n && inside(it, p) }) return cur
+                cur = p
+            }
+        }
+        val inView = cards.filter { it.bounds.top >= 0 && s.tapPoint(it) != null }
+            .map { it to whole(it) }
+            .sortedWith(compareBy({ it.second.bounds.top }, { it.second.bounds.left }))
+        var ads = 0
+        for ((card, box) in inView) {
+            if (s.subtree(box).any { Resolver.isAd(it) }) { ads++; continue }
+            return card to ads
+        }
+        return null to ads
+    }
+
     /** Items in the cart as the app shows it: Amazon's "Cart 5 items" tab, Zomato's "1 item added" bar. */
     private fun cartCount(s: Snapshot, app: String): Int? {
-        for (n in s.appNodes(app)) {
+        val nodes = s.appNodes(app)
+        for (n in nodes) {
             val l = n.label.trim()
             CART_COUNT.firstNotNullOfOrNull { rx -> rx.find(l)?.groupValues?.get(1)?.toIntOrNull() }?.let { return it }
+        }
+        // An icon labelled "bag"/"cart" with a number badge beside it (Myntra: "bag" + "10").
+        for (n in nodes) {
+            if (Text.norm(n.label) !in setOf("bag", "cart", "basket", "shopping bag", "shopping cart")) continue
+            // The badge sits somewhere in the icon's own small box (Myntra: bag's parent → badge box → "10").
+            var box: UiNode? = s.parentOf(n)
+            var hops = 0
+            while (box != null && hops < 3 && box.bounds.width() < s.screenW / 4) {
+                s.subtree(box).firstNotNullOfOrNull { x -> x.takeIf { it.idx != n.idx }?.label?.trim()?.toIntOrNull()?.takeIf { it in 0..999 } }?.let { return it }
+                box = s.parentOf(box); hops++
+            }
         }
         return null
     }

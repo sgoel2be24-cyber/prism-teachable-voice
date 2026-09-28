@@ -175,6 +175,46 @@ class Snapshot(
 
     fun imeTop(): Int = windows.firstOrNull { it.isIme }?.bounds?.top ?: -1
 
+    /**
+     * Where a finger should go to hit [n]: its centre, unless something drawn over it covers that
+     * spot. Myntra's sticky address bar and filter chips sit over the top of the results grid while
+     * the tiles under them still report their full boxes, so a tap at a tile's centre hit the header.
+     * Then the free point nearest the centre; null if the element is covered everywhere.
+     */
+    fun tapPoint(n: UiNode): Pair<Float, Float>? {
+        val vis = Rect(n.bounds)
+        if (vis.width() <= 0 || vis.height() <= 0 || !vis.intersect(0, 0, screenW, screenH)) return null
+        val ime = imeTop()
+        if (ime in 1 until vis.bottom) { vis.bottom = ime; if (vis.bottom <= vis.top) return null }
+        // Drawn over n: later siblings of n and of each of its ancestors, with everything inside them.
+        // Scrolling content doesn't count: a fixed bar listed before a list is still drawn over it
+        // (Zomato's "Continue" bar), the same rule as in dispatch().
+        val covers = ArrayList<Rect>()
+        val big = screenW.toLong() * screenH / 3 // full-screen wrappers and backdrops don't count
+        fun collect(i: Int, depth: Int) {
+            val o = nodes[i]
+            if (o.scrollable || depth > 60) return
+            val b = o.bounds
+            if (o.visible && b.width() > 0 && b.height() > 0 && area(o) <= big && Rect.intersects(b, vis)) covers.add(b)
+            for (c in o.children) collect(c, depth + 1)
+        }
+        var cur = n
+        var hops = 0
+        while (hops++ < 60) {
+            val p = parentOf(cur) ?: break
+            val at = p.children.indexOf(cur.idx)
+            for (s in p.children.subList(at + 1, p.children.size)) collect(s, 0)
+            cur = p
+        }
+        val cx = vis.exactCenterX(); val cy = vis.exactCenterY()
+        fun free(x: Float, y: Float) = covers.none { it.contains(x.toInt(), y.toInt()) }
+        if (free(cx, cy)) return cx to cy
+        val pts = ArrayList<Pair<Float, Float>>()
+        for (r in 1..11) for (col in 1..5)
+            pts.add(vis.left + vis.width() * col / 6f to vis.top + vis.height() * r / 12f)
+        return pts.filter { free(it.first, it.second) }.minByOrNull { (x, y) -> (x - cx) * (x - cx) + (y - cy) * (y - cy) }
+    }
+
     /** Topmost element under a screen point, and the element that would actually take the tap. */
     fun hitTest(x: Int, y: Int): Hit? {
         // Windows are topmost first. Some system windows (e.g. ColorOS's edge panel) cover the whole

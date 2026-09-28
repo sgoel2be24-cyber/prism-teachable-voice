@@ -53,6 +53,47 @@ Taught on Amazon only. The LLM drives each step in Myntra, and the Guard still a
 | search for sneakers on myntra and add the first result to my bag | success | 52 s | 13 | asked "Which size?", answered "9"; verified in the bag |
 | search for trekking shoes on myntra and add the first result to my bag | success | 64 s | 14 | asked size; scrolled the size row to find 9 |
 
+### Cross-app again, on the hand-taught Amazon task (28 Sep, 19:48–20:26 IST)
+
+The task used now is the one Shikhar taught by hand on Amazon (T8/T9 below). The first runs on it
+went wrong in five ways, each fixed:
+
+- *"…on myntra" ran on Amazon.* The model named Amazon as the app. An app the user names
+  ("on myntra", "on Myntra") now wins when it is an installed app's exact name.
+- *The first "result" was an advert.* Myntra's first two tiles carry a small "AD" tag. A tile is
+  now checked as a whole card for the tag, and the model's taps on advert tiles are refused.
+- *Tile taps did nothing.* Myntra's address bar and filter chips stay over the top of the grid
+  while the tiles under them report their full boxes, so a tap at a tile's centre hit the header.
+  Taps now go to the part of the element nothing is drawn over.
+- *The model wandered on the results grid* (tapped the search text, scrolled for an "Add to cart"
+  that Myntra's grid never has). In another app, "the first result" on a grid without add buttons
+  now opens the first product card that isn't an advert (a clickable box with a price that repeats
+  on screen) itself; the model then adds it from the product page.
+- *The item went in on the size sheet's DONE, unnoticed.* The sheet hides the bag icon, so the
+  count before the tap wasn't known. The last count seen in the step is used instead, and one add
+  that raises the count ends the step.
+
+The spoken result also names the app it ran in ("Done: Add wallet to cart on Myntra"), not the
+app it was taught in.
+
+All seven below from a cold start, one after the other (`recon/repeat_bench.sh`), sizes answered
+by `recon/autoanswer.sh` standing in for the user's voice:
+
+| Command (…on myntra and add the first result to my bag) | Result | Time | LLM calls | Picked | Asked |
+|---|---|---|---|---|---|
+| search for a laptop backpack | stopped before checkout | 43 s | 2 | ZERUS Work Travel Laptop Bag (after 2 AD tiles) | — |
+| search for sunglasses | done | 48 s | 2 | DressBerry Women Round Sunglasses (after 2 AD) | — |
+| search for a wallet | done | 49 s | 2 | Red Tape Leather Two Fold Wallet (after 2 AD) | — |
+| search for white sneakers | done | 56 s | 5 | Rowlans Men Colourblocked Sneakers (after 2 AD) | "Which shoe size would you like?" → 7 |
+| search for a black t-shirt | done | 59 s | 5 | Moda Rapido Men Solid Polo T-shirt (after 2 AD) | "Which size…? Available: S, M, L, XL." → M |
+| search for a blue denim jacket | stopped before checkout | 53 s | 5 | Moda Rapido Outdoor Denim Jacket (after 2 AD) | "Which size…?" → M |
+| search for a leather belt | done | 61 s | 5 | Red Tape Men Leather Belt (after 2 AD) | "…Available sizes: 32, 34, 36, 38, 40, 42." → 34 |
+
+**7/7**, one item added each time (bag 28 → 35). In earlier runs, when the answer didn't fit it
+asked again instead of choosing: "Size 9 is not available. Which size would you like instead?" for
+a shoe sold in 4–8, and "Which numeric size corresponds to M? Available options: 32, 34, …" for a
+belt.
+
 ## Regression after the Zomato reliability changes (28 Sep, 14:24–14:34 IST)
 
 Same recipe, same cold-start method (`recon/repeat_bench.sh`), phone on a phone hotspot.

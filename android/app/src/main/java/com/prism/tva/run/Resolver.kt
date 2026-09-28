@@ -78,12 +78,18 @@ object Resolver {
 
     private val AD = Regex("\\bsponsored\\b|_sspa\\b|\\bpromoted\\b", RegexOption.IGNORE_CASE)
 
+    /** An advert marker: "Sponsored", "Promoted", Amazon's "_sspa" links, a lone "Ad" tag. */
+    fun isAd(x: UiNode) = x.label.isNotEmpty() && (AD.containsMatchIn(x.label) || Text.norm(x.label) == "ad")
+
     /**
      * The element's card is an advert ("Sponsored Ad - …", Amazon's "sspa" links, a lone "Ad" tag).
      * The card is the largest box around it holding no other button like it. Its "Sponsored" line
      * may already be scrolled off the top, so hidden parts of the card count too.
      */
     fun sponsored(snap: Snapshot, n: UiNode): Boolean {
+        // n is a whole card itself (Myntra's PRODUCT_TILE_7 with its "AD" tag inside).
+        if (n.bounds.width().toLong() * n.bounds.height() < snap.screenW.toLong() * snap.screenH / 4 &&
+            snap.subtree(n).any { isAd(it) }) return true
         val key = Text.stable(n.label.ifEmpty { snap.labelsIn(n, 1).firstOrNull() ?: "" })
         // Every box that holds another button like this one (walk up from each twin once).
         val twinBoxes = HashSet<Int>()
@@ -105,7 +111,7 @@ object Resolver {
         // With no other button like it anywhere, "largest box" would be the whole page: use the
         // ordinary card instead.
         val box = (if (boundedByTwin) card else snap.rowContainer(n)) ?: return false
-        return snap.subtree(box).any { x -> x.label.isNotEmpty() && (AD.containsMatchIn(x.label) || Text.norm(x.label) == "ad") }
+        return snap.subtree(box).any { isAd(it) }
     }
 
     private fun isAncestor(snap: Snapshot, a: UiNode, b: UiNode): Boolean {

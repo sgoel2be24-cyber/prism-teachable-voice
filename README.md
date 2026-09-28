@@ -15,7 +15,7 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 - **Safety.** A payment/login/OTP/password guard is checked on every action.
 - **Run log**, spoken replies, and an on-screen status pill with Stop.
 - **Noisy demonstrations.** Switching to another app mid-demo (and the back gesture used to return) is dropped from the learned task.
-- **Another app, same task.** A task taught on Amazon runs on Myntra: the language model finds the equivalent buttons ("Add to Bag"), asks for a size instead of choosing one, and checks the bag before reporting success.
+- **Another app, same task.** A task taught on Amazon runs on Myntra when the user says "on myntra": it opens the first result that isn't an advert, the language model finds the equivalent buttons ("Add to Bag"), it asks for a size instead of choosing one, and it stops once the bag count goes up.
 
 ## Measured on the phone (Oppo Reno3, Android 12)
 
@@ -24,7 +24,7 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 | Replay across sessions (Amazon force-stopped before every run; exact, new values, paraphrases, Hinglish) | 8/8, median 21.9 s, 39/40 steps without the language model |
 | Learn success (teach once, replay once with a new value; one demo with an app-switch detour) | 4/4 |
 | Command understanding (Amazon test set) | 18/18, median 1.1 s |
-| Cross-app: taught on Amazon, run on Myntra | 3/3 (52–64 s; asks for size) |
+| Cross-app: taught by hand on Amazon, run on Myntra (backpack, sunglasses, wallet, sneakers, t-shirt, denim jacket, belt), cold start each time | 7/7, 43–61 s, 2–5 language-model calls; skipped Myntra's "AD" tiles every time; asked for the size on all four sized items |
 | Zomato, taught once by hand (with a mis-tap and a pop-up in the demo): exact, paraphrase, new pizza, two pizzas, deliver to Work, "order something" | 6/6, 29–78 s, 35/38 steps without the language model |
 | Zomato repeatability, to the payment page: the judges' sentence ×3 and "I want to order margherita pizza on zomato" (asks the restaurant) ×3, cold start each time | 6/6, 35–44 s, no language-model calls; stops at payment every time |
 
@@ -80,7 +80,7 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 
 - Needs a Fireworks API key for paraphrases, pop-up handling, quantity/address changes and questions; exact and template commands work offline.
 - The overlay adds about 0.2 s to each tap while teaching (replay is unaffected).
-- A task is learned from one demonstration in one app; running it in a similar app relies on the language model step by step, so it is slower (about 50–60 s on Myntra versus about 20 s on Amazon).
+- A task is learned from one demonstration in one app; running it in a similar app relies on the language model for the steps that look different, so it is slower (about 45–60 s on Myntra versus about 35–50 s on Amazon).
 - The phone must stay unlocked with the screen on while a task runs; accessibility services cannot act on a locked screen.
 - Web-based pages (Amazon's results) can take several seconds to appear to accessibility services on a slow connection; the assistant waits up to 15 s per step.
 - On a failing connection the target app itself stalls (Zomato's suggestions spin, "Something went wrong"). The assistant taps the app's "Try Again" up to three times and then reports where it stopped; it can't fix the network.

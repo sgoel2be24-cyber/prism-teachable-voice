@@ -202,7 +202,16 @@ class TvaAccessibilityService : AccessibilityService() {
         val sameApp = lm.otherApp == null ||
             Text.norm(lm.otherApp) == Text.norm(recipe.optString("appLabel")) ||
             Text.fuzzyContains(recipe.optString("appLabel"), lm.otherApp)
-        val other = if (sameApp) null else findApp(lm.otherApp!!)?.takeIf { it != recipe.optString("app") }
+        var other = if (sameApp) null else findApp(lm.otherApp!!)?.takeIf { it != recipe.optString("app") }
+        // The command names the app outright ("… on myntra …") but the model said the taught one:
+        // believe the words.
+        if (other == null) {
+            Regex("\\bon ([a-z][a-z0-9]*(?: [a-z0-9]+)?)\\b").findAll(Text.norm(u)).map { it.groupValues[1] }
+                .flatMap { sequenceOf(it, it.substringBefore(' ')) }.distinct()
+                .filter { it.length >= 4 }
+                .firstNotNullOfOrNull { name -> findApp(name, exact = true)?.takeIf { it != recipe.optString("app") } }
+                ?.let { Dbg.log("MATCH app named in the command: $it"); other = it }
+        }
         return done("run", recipe, slots, "llm conf=${lm.confidence}", other, lm.missing)
     }
 
@@ -284,12 +293,13 @@ class TvaAccessibilityService : AccessibilityService() {
     }
 
     /** Installed app whose name matches (for running a flow in a similar app). */
-    private fun findApp(name: String): String? {
+    private fun findApp(name: String, exact: Boolean = false): String? {
         val pm = packageManager
         val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(i, 0).map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
         // Exact name first ("Amazon" must not become "Amazon Alexa"), then a unique close match.
         apps.firstOrNull { (_, label) -> Text.norm(label) == Text.norm(name) }?.let { return it.first }
+        if (exact) return null
         val close = apps.filter { (_, label) -> Text.fuzzyContains(label, name) }
         return if (close.size == 1) close[0].first else null
     }
