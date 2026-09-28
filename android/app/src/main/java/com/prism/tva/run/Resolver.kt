@@ -194,11 +194,17 @@ object Resolver {
                 val row = snap.rowLabels(a) + labels
                 if (anchorSlotValue.isNotEmpty()) {
                     val soft = step.optBoolean("anchorSoft")
-                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) }) {
+                    // "Margherita Pizza" beats "Double Cheese Margherita Pizza" for "margherita", and
+                    // Pizza Hut's plain "Margherita" counts for "margherita pizza" (and beats its
+                    // "Margherita Ultimate Cheese Pizza", which merely contains both words).
+                    val v = Text.norm(anchorSlotValue)
+                    fun exact(label: String): Boolean {
+                        val l = Text.norm(label)
+                        return l.isNotEmpty() && (l == v || l.startsWith("$v ") || (l.length >= 4 && v.startsWith("$l ")) || Text.norm(label + "s") == v)
+                    }
+                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) || exact(it) }) {
                         s += if (soft) 2.0 else 4.0; why.append("anchor ")
-                        // "Margherita Pizza" beats "Double Cheese Margherita Pizza" for "margherita".
-                        val v = Text.norm(anchorSlotValue)
-                        if (row.any { val l = Text.norm(it); l == v || l.startsWith("$v ") || v.startsWith("$l ") || Text.norm(it + "s") == v }) {
+                        if (row.any { exact(it) }) {
                             s += 1.5; why.append("anchor= ")
                         }
                     } else s -= if (soft) 0.5 else 4.0

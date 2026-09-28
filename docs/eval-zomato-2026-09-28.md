@@ -110,6 +110,34 @@ away something the user has (Zomato's "replace cart?" when the cart holds anothe
 items) makes the assistant ask, e.g. "Your cart has items from Domino's. Replace them with this
 order?". "No" leaves the cart as it is and stops.
 
+## T7 again: another restaurant, with Domino's items in the cart (22:36–22:57 IST)
+
+Command: "Order a Margherita pizza from Pizza Hut on Zomato" (taught only on Domino's), with a
+Margherita and a Farmhouse from Domino's in the cart.
+
+- **No "replace cart?" dialog.** Zomato now keeps one cart per restaurant: the Pizza Hut order
+  went through and the Domino's cart was still there afterwards (the next Domino's runs found both
+  pizzas already in it). The assistant still asks if an app does offer to replace a cart.
+- **It added the wrong pizza, and said it hadn't.** On the Pizza Hut menu the model tapped a
+  "Margherita Pizza" category tile, which opened a sheet for "Spicy Sweet Corn, Onion, Green
+  Chilli"; the demo's "Add item" step then added it, and the run ended "Done: Order margherita
+  pizza…". Three fixes:
+  - Before any "Add item", the options sheet must name the dish asked for; otherwise it is closed
+    without adding (and the model's own taps on such a button are refused).
+  - On a menu the model has just opened (Pizza Hut's outlet picker comes first), the menu's own
+    search is used for the dish, instead of the model guessing which ADD belongs to which dish. A
+    screen without a search box no longer uses up that one try.
+  - For a named dish, the plain "Margherita" now beats "Margherita Ultimate Cheese Pizza"; the
+    longer name only contains the words.
+
+| Run | Result |
+|---|---|
+| Before the fixes | "Spicy Sweet Corn, Onion, Green Chilli" (₹149) in the cart; reported done |
+| Sheet check only | every wrong sheet refused ("Spicy…", "Classic White Sauce Pasta Non Veg"); nothing added; stopped: "I couldn't confirm…" |
+| + menu search | "Margherita Ultimate Cheese Pizza" (₹228) added (the longer name won) |
+| + plain-name preference | **Margherita (Pan, Personal) ₹149**, stopped before checkout, 64 s, 2 LLM calls |
+| Regression: judges' sentence; "Order a Farmhouse pizza from Domino's on Zomato" | payment 47 s; checkout 52 s; 0 LLM calls (both already in the cart, so not added again) |
+
 ## T10: signed out of Zomato (15:25–15:33 IST)
 
 Zomato has no in-app language setting (Profile → Settings has only account and notification

@@ -4,7 +4,7 @@ Samsung PRISM GenAI Hackathon 2026, Theme 3.
 
 An Android assistant you teach by doing. Say a command, perform the task once in any app, and from then on it does the task on voice command, including with different values ("get me a Farmhouse instead", "two of them", "deliver to Work") and different wording. It works only through Android's Accessibility Service, with no app-specific APIs and no deep links. It stops and hands control back at payment, OTP and login screens.
 
-**Target apps:** Zomato (ordering from Domino's) and Amazon (search, add the first result to the cart).
+**Target apps:** Zomato (ordering from Domino's) and Amazon (search, add the first result to the cart); the Amazon task also runs on Myntra.
 
 ## What works today
 
@@ -12,6 +12,7 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 - **Generalisation.** Slots are found from the command ("search for {product} on amazon…", "ADD next to {item}"), and a language model names them, writes step intents and adds quantity/address goals.
 - **Understanding commands.** Exact wording is matched offline; paraphrases, changed values, Hinglish, missing values and "did the last run succeed?" go through the language model. The Amazon test set scores 18/18, median 1.1 s.
 - **Reliable replay.** A fast path does scored element matching with no network call. The language model steps in only when the screen differs (pop-ups, unseen screens), and the user is asked when a value is missing or the screen can't be handled.
+- **The right item.** "The first result" skips Sponsored/Ad cards. A dish's options sheet must name the dish asked for, or it is closed without adding. On a restaurant it wasn't taught on, it searches the menu for the dish and prefers the plain "Margherita" over "Margherita Ultimate Cheese Pizza". An item already in the cart isn't added twice.
 - **Safety.** A payment/login/OTP/password guard is checked on every action.
 - **Run log**, spoken replies, and an on-screen status pill with Stop.
 - **Noisy demonstrations.** Switching to another app mid-demo (and the back gesture used to return) is dropped from the learned task.
@@ -24,6 +25,8 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 | Replay across sessions (Amazon force-stopped before every run; exact, new values, paraphrases, Hinglish) | 8/8, median 21.9 s, 39/40 steps without the language model |
 | Learn success (teach once, replay once with a new value; one demo with an app-switch detour) | 4/4 |
 | Command understanding (Amazon test set) | 18/18, median 1.1 s |
+| Amazon, taught by hand: earbuds ×5, phone case ×4, water bottle ×2, plus "put a notebook in my amazon cart", "amazon pe pencil box search karke pehla result cart mein daal do", "i need a desk lamp, add the first one on amazon to my cart" | 14/14, 32–61 s, first non-sponsored result every time |
+| Zomato, a restaurant it wasn't taught on ("Order a Margherita pizza from Pizza Hut on Zomato": outlet picker, menu search) | Margherita (Pan, Personal) in the cart, stopped before checkout, 64 s, 2 language-model calls |
 | Cross-app: taught by hand on Amazon, run on Myntra (backpack, sunglasses, wallet, sneakers, t-shirt, denim jacket, belt), cold start each time | 7/7, 43–61 s, 2–5 language-model calls; skipped Myntra's "AD" tiles every time; asked for the size on all four sized items |
 | Zomato, taught once by hand (with a mis-tap and a pop-up in the demo): exact, paraphrase, new pizza, two pizzas, deliver to Work, "order something" | 6/6, 29–78 s, 35/38 steps without the language model |
 | Zomato repeatability, to the payment page: the judges' sentence ×3 and "I want to order margherita pizza on zomato" (asks the restaurant) ×3, cold start each time | 6/6, 35–44 s, no language-model calls; stops at payment every time |
@@ -86,3 +89,5 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 - On a failing connection the target app itself stalls (Zomato's suggestions spin, "Something went wrong"). The assistant taps the app's "Try Again" up to three times and then reports where it stopped; it can't fix the network.
 - Spoken answers use the phone's speech recogniser (English, India); in a noisy room, typing the answer in the app works too.
 - It never picks personal options (size, colour, address) on its own: it asks. It never pays, places an order or enters a login, OTP or password.
+- Zomato now keeps a separate cart per restaurant, so ordering from a second restaurant doesn't touch the first cart. If an app does ask to replace or clear a cart, the assistant asks the user instead of deciding.
+- A dish must be recognisable by name: if the options sheet that opens doesn't name the dish asked for (a very different menu name, or the name only in a picture), the assistant closes it without adding and tries again; if it can't find the right one, it stops and says what it found.

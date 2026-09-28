@@ -73,6 +73,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         var addStep: Boolean = false, // the current step adds something to the cart/bag
         var lastTap: String = "", // what the model tapped last (to stop it unselecting a size)
         var cartSeen: Int? = null, // last cart count seen in this step (a size sheet hides the bag icon)
+        var item: String = "", // the named item the last "ADD next to {item}" step was for
     )
 
     @Volatile private var job: Job? = null
@@ -367,6 +368,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         c.addStep = st.optJSONObject("target")?.let { t -> ADDISH.containsMatchIn(t.optString("leafLabel").ifEmpty { t.optString("label") }) } == true ||
             Regex("\\badd\\b.*\\b(cart|bag|basket)\\b", RegexOption.IGNORE_CASE).containsMatchIn(st.optString("intent"))
         c.cartSeen = null
+        if (c.addStep) st.optString("anchorSlot").takeIf { it.isNotEmpty() }?.let { c.slots[it] }
+            ?.takeIf { it.isNotBlank() }?.let { c.item = it }
+        var wrongSheets = 0
         while (true) {
             svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
@@ -432,6 +436,20 @@ class Executor(private val svc: TvaAccessibilityService) {
                 guardTap(snap, m.node)?.let { return it }
                 val long = st.optString("kind") == "longpress"
                 val shown = Brain.display(snap, m.node, 40).ifEmpty { m.node.label }
+                // An options sheet for a different dish ("Spicy Sweet Corn" when the order is
+                // Margherita): close it instead of adding the wrong thing, and find the right ADD.
+                val wrongTitle = if (ADDISH.containsMatchIn(shown) && c.item.isNotEmpty()) otherItem(snap, m.node, c.item) else null
+                if (wrongTitle != null) {
+                    wrongSheets++
+                    Dbg.log("WRONG_ITEM the options are for \"$wrongTitle\", not \"${c.item}\"")
+                    if (wrongSheets > 2) return StepResult(false, "failed", "guard",
+                        "the options that opened were for \"$wrongTitle\", not ${c.item}, so I didn't add it")
+                    svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    svc.settle(500, 3000)
+                    c.history.add("the options sheet that opened was for \"$wrongTitle\", not \"${c.item}\"; closed it without adding. Tap ADD next to \"${c.item}\" itself")
+                    preScrolls = 10 // straight to the model: the demo's screen isn't there any more
+                    continue
+                }
                 if (ADDISH.containsMatchIn(shown)) c.cartBefore = cartCount(snap, c.app) ?: 0
                 Dbg.log("TAP \"$shown\" card: ${snap.rowLabels(m.node, 4).joinToString(" | ") { it.take(60) }}${if (Resolver.sponsored(snap, m.node)) " [SPONSORED]" else ""}")
                 var ok = press(m.node, long)
@@ -519,9 +537,14 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             // An item far down a long menu: use the page's own "Search in …" box once, then match again.
             val anchorValue = c.slots[st.optString("anchorSlot")].orEmpty()
-            if (st.optInt("scrollsBefore") >= 8 && !pageSearched && anchorValue.isNotEmpty() && !c.cross) {
-                pageSearched = true
-                if (searchInPage(snap, anchorValue, c)) continue
+            // Also on a menu the model has just opened (another restaurant's, reached via its outlet
+            // picker): search it for the item rather than letting the model guess which ADD is whose.
+            val menuLike = llmActs > 0 && snap.appNodes(c.app).any { Text.norm(it.label) == "add" }
+            // A screen without a search box (the outlet picker in front of the menu) doesn't use up the try.
+            if ((st.optInt("scrollsBefore") >= 8 || menuLike) && !pageSearched && anchorValue.isNotEmpty() && !c.cross) {
+                val searched = searchInPage(snap, anchorValue, c)
+                if (searched != null) pageSearched = true
+                if (searched == true) continue
             }
             // In another app, "add the first result" on a results grid whose cards have no add button
             // (Myntra): open the first result that isn't an advert ourselves, then the model adds it
@@ -651,6 +674,13 @@ class Executor(private val svc: TvaAccessibilityService) {
                     c.history.add("\"${shownNow.take(50)}\" is an advert (AD / Sponsored); the first result means the first one that isn't an advert")
                     Dbg.log("LLM tap on an advert blocked: $shownNow")
                     return StepResult(true, "success", "llm", "skipped an advert") to false
+                }
+                if (c.item.isNotEmpty() && ADDISH.containsMatchIn(shownNow)) {
+                    otherItem(snap, n, c.item)?.let { title ->
+                        c.history.add("\"${shownNow.take(40)}\" would add \"$title\", not \"${c.item}\": close this sheet (back or ✕) and tap ADD next to \"${c.item}\" itself")
+                        Dbg.log("WRONG_ITEM the model's add is for \"$title\", not \"${c.item}\"; blocked")
+                        return StepResult(true, "success", "llm", "blocked adding the wrong item") to false
+                    }
                 }
                 c.lastTap = Text.stable(shownNow)
                 // Tap like a finger where the model pointed: some apps accept an accessibility click
@@ -818,10 +848,10 @@ class Executor(private val svc: TvaAccessibilityService) {
 
     /**
      * Types [value] into the page's search box. On a restaurant page that is the menu search
-     * ("Search in Domino's Pizza"), reached from the search bar at the top. Returns false when the
-     * page has no search box.
+     * ("Search in Domino's Pizza"), reached from the search bar at the top. Null when the page has
+     * no search box; false when typing into it failed.
      */
-    private suspend fun searchInPage(snap: Snapshot, value: String, c: Ctx): Boolean {
+    private suspend fun searchInPage(snap: Snapshot, value: String, c: Ctx): Boolean? {
         val inPage = Regex("^search (in|within) ", RegexOption.IGNORE_CASE)
         val notText = Regex("voice|scan|camera|mic|filter", RegexOption.IGNORE_CASE)
         val boxes = snap.appNodes(c.app).filter { n ->
@@ -829,7 +859,7 @@ class Executor(private val svc: TvaAccessibilityService) {
             (n.clickable || n.editable) && words.contains("search", ignoreCase = true) && !notText.containsMatchIn(words)
         }
         val box = boxes.firstOrNull { inPage.containsMatchIn(Brain.display(snap, it, 80).ifEmpty { Text.clean(it.hint) }) }
-            ?: boxes.minByOrNull { it.bounds.top } ?: return false
+            ?: boxes.minByOrNull { it.bounds.top } ?: return null
         Dbg.log("PAGE_SEARCH \"$value\" via \"${Brain.display(snap, box, 40)}\"")
         if (!box.editable) { press(box); svc.settle(400, 3000) }
         val s2 = svc.snapshot()
@@ -848,6 +878,30 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (!kept) return false
         }
         return true
+    }
+
+    private val GENERIC_ITEM_WORDS = setOf("pizza", "pizzas", "burger", "burgers", "meal", "meals", "combo", "large",
+        "small", "medium", "regular", "with", "and", "the", "extra")
+
+    /**
+     * When nothing in the window around [n] (an add button) names [item], that window's title: the
+     * button would add another dish. Zomato's options sheet is the only thing reported while it's
+     * open, so it is judged on its own; a menu row is anchored to the item and always names it.
+     * Null when the item is named.
+     */
+    private fun otherItem(snap: Snapshot, n: UiNode, item: String): String? {
+        val words = Text.norm(item).split(' ').filter { it.length >= 3 }
+        val keys = words.filter { it.length >= 4 && it !in GENERIC_ITEM_WORDS }.ifEmpty { words }
+        if (keys.isEmpty()) return null
+        val labels = snap.nodes.filter { it.window == n.window && it.visible && it.label.isNotEmpty() }
+        val seen = labels.flatMap { Text.norm(it.label).split(' ') }.toSet()
+        fun has(k: String) = k in seen || (k.length >= 6 && seen.any { w -> w.length >= 5 && Text.lev(w, k) <= 2 })
+        if (keys.all { has(it) }) return null
+        // The sheet's title: its first real words (not an icon glyph, a price or the button itself).
+        return labels.map { it.label.trim() }.firstOrNull { l ->
+            l.length in 4..70 && l.any { ch -> ch.isLetter() } && !ADDISH.containsMatchIn(l) &&
+                !Regex("^(required|optional|select|choose)", RegexOption.IGNORE_CASE).containsMatchIn(l)
+        } ?: "another item"
     }
 
     /**

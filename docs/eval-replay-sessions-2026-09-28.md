@@ -165,3 +165,16 @@ first result that isn't an advert:
 | phone case ×3 | `sr_1_3` Meyaar grip/case mount (first organic) | 3/3, 39–48 s, 0 LLM calls |
 | water bottle ×2 | `sr_1_4` Milton Torino 1000 (first organic, after three ads) | 2/2, 36–38 s |
 | Zomato judges' sentence ×2 (regression) | — | 2/2 to payment, 40–45 s, 0 LLM calls |
+
+## Paraphrases and Hinglish on the hand-taught task (28 Sep, 22:57–23:00 IST)
+
+Cold start each time, on the build with the cross-app and right-item changes.
+
+| Command | Result | Time | LLM calls |
+|---|---|---|---|
+| put a notebook in my amazon cart | added straight from the results (cart 43 → 44), Navneet Youva notebook, not sponsored | 32 s | 0 |
+| amazon pe pencil box search karke pehla result cart mein daal do | matched by the model (confidence 0.99); product page's add button; "1 in cart" as proof | 61 s | 2 |
+| i need a desk lamp, add the first one on amazon to my cart | added straight from the results (46 → 47), `sr_1_3` (first organic) | 42 s | 0 |
+
+**3/3.** Earlier the same evening (20:27–20:29), after the cross-app changes: earbuds 44 s and phone
+case 45 s, 0 LLM calls, first non-sponsored result.
