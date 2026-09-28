@@ -30,7 +30,7 @@ class Asker(private val svc: TvaAccessibilityService) {
         pending = d
         Dbg.log("ASK $question")
         svc.hud.show("❓ $question", listOf("Skip" to { answer(null) }))
-        svc.speaker.say(question) { main.post { listen(retries = 1) } }
+        svc.speaker.say(question) { main.post { listen(retries = 6) } }
         val r = withTimeoutOrNull(timeoutMs) { d.await() }
         pending = null
         main.post { stopListening() }
@@ -56,11 +56,18 @@ class Asker(private val svc: TvaAccessibilityService) {
         r.setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle?) {
                 val best = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (best.isNullOrBlank() && retries > 0) listen(retries - 1) else answer(best)
+                if (!best.isNullOrBlank()) answer(best) else retry()
             }
             override fun onError(error: Int) {
                 Dbg.log("ASK recognizer error $error")
-                if (retries > 0 && waiting) main.postDelayed({ listen(retries - 1) }, 300)
+                retry()
+            }
+            // Silence or an unclear answer: keep listening until the question times out (or Skip).
+            private fun retry() {
+                if (retries > 0 && waiting) {
+                    svc.hud.update("🎤 Didn't catch that. Say it again, or tap Skip")
+                    main.postDelayed({ listen(retries - 1) }, 400)
+                }
             }
             override fun onReadyForSpeech(params: Bundle?) { svc.hud.update("🎤 Listening…") }
             override fun onBeginningOfSpeech() {}

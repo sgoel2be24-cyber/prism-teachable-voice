@@ -13,7 +13,7 @@ android/local.properties
 android/.gradle/
 android/build/
 android/app/build/
-android/build.log
+android/build*.log
 .idea/
 *.iml
 .DS_Store

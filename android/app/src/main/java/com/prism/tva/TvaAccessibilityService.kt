@@ -201,11 +201,21 @@ class TvaAccessibilityService : AccessibilityService() {
         return done("run", recipe, slots, "llm conf=${lm.confidence}", other, lm.missing)
     }
 
+    @Volatile private var lastUtterance = ""
+    @Volatile private var lastUtteranceAt = 0L
+
     /** Handles a spoken or typed command: answer a status question, run a learned flow, or offer to learn it. */
     fun handleUtterance(utterance: String) {
         scope.launch {
             val u = utterance.trim()
             if (u.isEmpty()) return@launch
+            // Some recognizers deliver the same result twice; a second copy would cancel the first run.
+            val now = System.currentTimeMillis()
+            if (Text.norm(u) == lastUtterance && now - lastUtteranceAt < 5000) {
+                Dbg.log("UTTERANCE duplicate ignored \"$u\"")
+                return@launch
+            }
+            lastUtterance = Text.norm(u); lastUtteranceAt = now
             Dbg.log("UTTERANCE \"$u\"")
             val r = resolveCommand(u)
             when (r.kind) {

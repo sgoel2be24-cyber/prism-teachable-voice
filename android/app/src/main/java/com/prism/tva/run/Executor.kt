@@ -281,6 +281,9 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             val elapsed = System.currentTimeMillis() - start
             if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
+            // Web-based result pages can sit blank (only the top bar and tab bar) for several seconds
+            // on a slow connection; scrolling or asking the LLM about an empty page goes nowhere.
+            if (elapsed < 15000 && blank(snap, c.app)) { delay(500); continue }
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to three thumb scrolls with the fast matcher, then the LLM.
             if (preScrolls < 3 && !c.cross) {
@@ -468,6 +471,15 @@ class Executor(private val svc: TvaAccessibilityService) {
         }
     }
 
+    /** Nothing in the middle of the screen yet: the page is still loading. */
+    private fun blank(s: Snapshot, app: String): Boolean {
+        val top = (s.screenH * 0.2).toInt()
+        val bottom = (s.screenH * 0.85).toInt()
+        return s.appNodes(app).count {
+            it.bounds.centerY() in top..bottom && it.bounds.height() < s.screenH / 2 && (it.label.isNotEmpty() || it.clickable)
+        } < 3
+    }
+
     /** Cheap fingerprint of what's on screen (screen name + visible labels and their positions). */
     private fun sig(s: Snapshot, app: String): Int =
         (s.activity + "|" + s.nodes.asSequence()
@@ -505,6 +517,16 @@ class Executor(private val svc: TvaAccessibilityService) {
                 if (st.optBoolean("submit")) {
                     delay(500)
                     if (!Actions.imeEnter(field)) return StepResult(false, "failed", "type", "couldn't press search")
+                    // The search key is sometimes swallowed while suggestions are still loading: if the
+                    // box is still focused with our text and the keyboard is up, press it again.
+                    for (attempt in 1..2) {
+                        svc.settle(500, 2500)
+                        val s = svc.snapshot()
+                        val still = s.appNodes(c.app).firstOrNull { it.editable && it.focused }
+                        if (still == null || s.imeTop() < 0 || Text.norm(still.label) != Text.norm(value)) break
+                        Dbg.log("TYPE search key didn't take; pressing it again")
+                        Actions.imeEnter(still)
+                    }
                 }
                 svc.settle(500, 4000)
                 return StepResult(true, "success", "type", "\"$value\"")

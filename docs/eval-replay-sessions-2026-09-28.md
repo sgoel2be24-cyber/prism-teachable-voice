@@ -28,6 +28,22 @@ straight to the LLM, which opened the product page and ran out of time scrolling
 cart". Fix: up to three quick scrolls with the fast matcher before asking the LLM (`scroll+match`
 above), plus shorter waits on pages that never go quiet. After the fix: 8/8.
 
+## Learn success — teach once, replay once (28 Sep, 08:45–09:01 IST)
+Each row is a fresh demonstration (scripted adb taps standing in for the finger, `recon/learn_bench.sh`
+and `recon/teach_amazon_noise.sh`), then one cold-start replay of the new recipe with a different value.
+
+| Taught with | Noise in the demo | Learned | Replayed with | Outcome | Time | LLM calls |
+|---|---|---|---|---|---|---|
+| "Search for a steel water bottle on Amazon and add the first result to cart" | switched to Calculator, tapped, came back with the back gesture | 5 steps; Calculator tap and back dropped as noise | glass water bottle | success | 29.3 s | 0 |
+| "Search for a yoga mat on Amazon and add the first result to cart" | — | 5 steps, slot `product` | dumbbells | success | 30.2 s | 0 |
+| "Find a coffee mug on Amazon and put the first one in my cart" | — | 5 steps, slot `product` | tea kettle | success | 23.7 s | 0 |
+| "Add the first shaving razor from Amazon search to my cart" | — | 5 steps, slot `product` | beard trimmer | success | 11.3 s | 0 |
+
+**4/4 demonstrations learned a working, parameterised task on the first try.** Two fixes came out of
+this pass: a back gesture used to leave another app is now dropped with that detour (it used to be
+kept as a step), and a results page that is still blank (slow network) is waited for instead of
+being scrolled or handed to the LLM.
+
 ## Cross-app (bonus) — same recipe run in Myntra
 Taught on Amazon only. The LLM drives each step in Myntra, and the Guard still applies.
 

@@ -44,16 +44,22 @@ object Generaliser {
         val kept = ArrayList<JSONObject>()
         val noise = JSONArray()
         var seenApp = false
+        var lastPkg = ""
         for (s in raw) {
             val pkg = s.optString("pkg")
             when (s.optString("kind")) {
-                "tap", "longpress", "type" -> when {
-                    pkg == app -> { seenApp = true; kept.add(s) }
-                    pkg == homePkg && !seenApp -> Unit // the launcher tap that opened the app
-                    else -> noise.put(JSONObject().put("reason", "outside ${appLabel.ifEmpty { "the app" }}: $pkg")
-                        .put("label", s.optJSONObject("target")?.optString("leafLabel") ?: ""))
+                "tap", "longpress", "type" -> {
+                    when {
+                        pkg == app -> { seenApp = true; kept.add(s) }
+                        pkg == homePkg && !seenApp -> Unit // the launcher tap that opened the app
+                        else -> noise.put(JSONObject().put("reason", "outside ${appLabel.ifEmpty { "the app" }}: $pkg")
+                            .put("label", s.optJSONObject("target")?.optString("leafLabel") ?: ""))
+                    }
+                    if (pkg.isNotEmpty() && !pkg.contains("inputmethod")) lastPkg = pkg
                 }
-                "back" -> if (seenApp) kept.add(JSONObject().put("kind", "back"))
+                // A back used to leave another app (a notification, a quick reply) is part of the detour.
+                "back" -> if (seenApp && lastPkg == app) kept.add(JSONObject().put("kind", "back"))
+                    else if (seenApp) { noise.put(JSONObject().put("reason", "back out of $lastPkg")); lastPkg = app }
                 else -> Unit // scrolls are re-done automatically while searching; home ends the flow
             }
         }

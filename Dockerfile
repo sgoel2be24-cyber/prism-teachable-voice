@@ -26,12 +26,12 @@ WORKDIR /src
 COPY android/ /src/android/
 
 ARG FIREWORKS_API_KEY=""
-RUN printf '%s' "$FIREWORKS_API_KEY" > /src/.fireworks_key \
+RUN printf '%s' "$FIREWORKS_API_KEY" > /src/.fireworks_key_submission \
     && cd /src/android \
     && echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties \
     && chmod +x gradlew \
-    && ./gradlew assembleDebug --no-daemon --console=plain \
-    && cp app/build/outputs/apk/debug/app-debug.apk /src/teachable-voice.apk \
-    && rm -f /src/.fireworks_key
+    && ./gradlew assembleRelease --no-daemon --console=plain \
+    && cp app/build/outputs/apk/release/app-release.apk /src/teachable-voice.apk \
+    && rm -f /src/.fireworks_key_submission
 
 CMD ["sh", "-c", "mkdir -p /out && cp /src/teachable-voice.apk /out/ && echo 'APK written to /out/teachable-voice.apk'"]
