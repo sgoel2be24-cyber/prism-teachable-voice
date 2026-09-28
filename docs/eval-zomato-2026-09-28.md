@@ -110,6 +110,24 @@ away something the user has (Zomato's "replace cart?" when the cart holds anothe
 items) makes the assistant ask, e.g. "Your cart has items from Domino's. Replace them with this
 order?". "No" leaves the cart as it is and stops.
 
+## T10: signed out of Zomato (15:25–15:33 IST)
+
+Zomato has no in-app language setting (Profile → Settings has only account and notification
+settings), so the judges' T10 on Zomato means signing out. Signed out on this device only
+(Profile → Log out → Current Device); Zomato then opens on "Choose your account · Use another
+sign-in method", with no text field on screen.
+
+| Command | Outcome |
+|---|---|
+| Order a Margherita pizza from Domino's on Zomato | stopped at step 2 in **2.8 s**, no taps: "I've stopped at a sign-in screen (you seem to be signed out; please sign in, then ask me again). Your turn." |
+| did the last run succeed? (T14 after T10) | "No. Your last run, Order margherita pizza from dominos on Zomato, at 3:31 PM, stopped at step 2 of 11 (Open search bar): it reached a sign-in screen…" |
+
+Before the fix the guard only knew a sign-in screen by its phone/OTP/password field, and this
+account chooser has none, so tapping "Shikhar Goel" (which signs in) wasn't blocked. Sign-in
+screens are now also recognised by their wording ("Choose your account", "Use another sign-in
+method", "Continue with Google", "Log in or sign up"…). The run report now names the step it
+stopped at.
+
 ## What the hand demo broke, and the fixes
 - **Wrong slot and a lost ADD.** The ADD button's "card" was a small box holding only "customisable";
   the dish name sat two levels up. The card of a repeated button is now the largest ancestor holding

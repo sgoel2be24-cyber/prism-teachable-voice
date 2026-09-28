@@ -33,6 +33,12 @@ object Guard {
         "log in", "login", "sign in", "signin", "sign up", "verify", "continue with", "otp", "welcome back",
     )
 
+    /** Phrases that only appear on a signed-out / sign-in screen. */
+    private val LOGIN_SCREEN = listOf(
+        "choose your account", "use another sign in method", "log in or sign up", "login or signup", "sign in or sign up",
+        "enter your mobile number", "enter your phone number", "continue with google", "continue with phone",
+    )
+
     private fun padded(s: String) = " " + Text.norm(s) + " "
 
     /** Non-null reason if tapping an element with these labels could start a payment. */
@@ -57,6 +63,10 @@ object Guard {
             n.editable && CRED_FIELDS.any { k -> padded(n.hint ?: "").contains(" $k ") || padded(n.label).contains(" $k ") }
         }
         if (credField && AUTH_WORDS.any { screenText.contains(" $it ") }) return "login"
+        // Signed out: a login screen with no field yet (Zomato's "Choose your account · Use another
+        // sign-in method", a "Continue with Google" page). Tapping the account would sign in. (Not the
+        // activity name: Zomato's splash screen is also com.application.zomato.login.ZomatoActivity.)
+        if (LOGIN_SCREEN.any { screenText.contains(" $it ") }) return "login"
         return null
     }
 
@@ -68,7 +78,7 @@ object Guard {
     fun spoken(reason: String) = when (reason) {
         "payment" -> "the payment step"
         "password" -> "a password screen"
-        "login" -> "a login or OTP screen"
+        "login" -> "a sign-in screen (you seem to be signed out; please sign in, then ask me again)"
         else -> "a sensitive screen"
     }
 }

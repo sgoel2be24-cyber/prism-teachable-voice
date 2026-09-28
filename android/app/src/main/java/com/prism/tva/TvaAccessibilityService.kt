@@ -258,11 +258,22 @@ class TvaAccessibilityService : AccessibilityService() {
         val time = SimpleDateFormat("h:mm a", Locale.US).format(Date(last.optLong("startedAt")))
         val what = last.optString("recipeName").ifEmpty { last.optString("utterance") }
         val steps = last.optInt("stepCount")
+        val reason = last.optString("reason")
+        // "at step 2 of 11 (Open search bar)"
+        val stopIdx = last.optInt("stoppedAt", -1)
+        val stepName = last.optJSONArray("steps")?.let { arr ->
+            (0 until arr.length()).map { arr.getJSONObject(it) }.lastOrNull { it.optInt("i") == stopIdx }?.optString("desc")
+        }.orEmpty().substringBefore(" (Tap").substringBefore(" (Type").trim()
+        val at = if (stopIdx >= 0) "at step ${stopIdx + 1} of $steps" + (if (stepName.isNotEmpty()) " ($stepName)" else "") else ""
         val msg = when (last.optString("outcome")) {
             "success" -> "Yes. Your last run, $what, at $time, completed all $steps steps."
-            "handover" -> "Your last run, $what, at $time, went as far as it safely could and stopped at ${last.optString("reason")} for you to finish."
-            "stopped" -> "Your last run, $what, was stopped at step ${last.optInt("stoppedAt") + 1}."
-            else -> "No. Your last run, $what, at $time, failed at step ${last.optInt("stoppedAt") + 1} of $steps: ${last.optString("reason")}."
+            "handover" -> when (reason) {
+                "payment" -> "Yes. Your last run, $what, at $time, reached the payment page and handed over to you. Nothing was paid."
+                "checkout" -> "Yes. Your last run, $what, at $time, reached checkout and handed over to you. Nothing was paid."
+                else -> "No. Your last run, $what, at $time, stopped $at: it reached $reason."
+            }
+            "stopped" -> "No. Your last run, $what, was stopped by you $at."
+            else -> "No. Your last run, $what, at $time, failed $at: $reason."
         }
         say(msg)
         hud.show(msg, listOf("OK" to { hud.hide() }), autoHideMs = 10000)
