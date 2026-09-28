@@ -185,6 +185,7 @@ class TvaAccessibilityService : AccessibilityService() {
         val lm = if (recipes.isNotEmpty() && Fireworks.available) Brain.matchCommand(u, recipes) else null
         if (lm?.statusQuery == true) return done("status", how = "llm")
         val recipe = lm?.flowId?.let { id -> recipes.firstOrNull { it.optString("id") == id } }
+        if (lm == null && recipes.isNotEmpty() && Fireworks.available) return done("unreachable", how = "llm-timeout")
         if (recipe == null || lm.confidence < 0.5) return done("none", how = if (lm == null) "no-llm" else "llm")
         val slots = HashMap(lm.slots)
         // Optional goal slots (quantity, address) fall back to what was demonstrated.
@@ -229,6 +230,12 @@ class TvaAccessibilityService : AccessibilityService() {
                 "run" -> {
                     Dbg.log("MATCH \"$u\" -> ${r.recipe!!.optString("id")} (${r.how}) ${r.slots} missing=${r.missing} app=${r.otherApp ?: "-"}")
                     executor.start(r.recipe, r.slots, u, r.otherApp)
+                }
+                "unreachable" -> {
+                    // Don't offer to teach something it may already know: the model just didn't answer.
+                    Dbg.log("MATCH_UNREACHABLE \"$u\"")
+                    say("I couldn't reach the language model just now. Please say that again.")
+                    hud.show("Couldn't reach the language model. Try again.", listOf("OK" to { hud.hide() }), autoHideMs = 8000)
                 }
                 else -> {
                     Dbg.log("NO_MATCH \"$u\"")

@@ -49,7 +49,10 @@ Reply with JSON only: {"flow": id|null, "slots": {name: value}, "missing": [name
                 .put("description", r.optString("description").ifEmpty { r.optString("template") })
                 .put("taught_command", r.optString("command")).put("slots", slots))
         }
-        val j = Fireworks.json(MATCH_SYS, JSONObject().put("command", utterance).put("flows", flows).toString(), "match")
+        val req = JSONObject().put("command", utterance).put("flows", flows).toString()
+        // The API occasionally stalls for 20 s+; a fresh request usually answers in about a second.
+        val j = Fireworks.json(MATCH_SYS, req, "match", timeoutMs = 8000)
+            ?: Fireworks.json(MATCH_SYS, req, "match-retry", timeoutMs = 10000)
             ?: return null
         val slots = HashMap<String, String>()
         j.optJSONObject("slots")?.let { o -> o.keys().forEach { k -> o.optString(k).takeIf { it.isNotBlank() && it != "null" }?.let { slots[k] = it } } }
