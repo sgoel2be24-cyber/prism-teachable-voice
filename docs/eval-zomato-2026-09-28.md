@@ -71,6 +71,23 @@ every model call (one had hung for 138 s).
 Zomato" with the example values, the 11 steps in words, the ignored step marked "not needed",
 and the two follow-ups ("ensure {quantity} of {item}", "set delivery address to {address}").
 
+## Re-check of the other tests on the current build (14:40–14:47 IST)
+
+Same recipe (re-taught at 12:51), cold start, phone on a hotspot.
+
+| Command | Test | Outcome |
+|---|---|---|
+| Order a Farmhouse pizza from Domino's on Zomato | T4 / T9 new value | Farmhouse added (cart checked afterwards), stopped at payment, 44 s, 0 LLM calls |
+| Order two Margherita pizzas from Domino's on Zomato | T5 quantity | empty cart → "+" in the crust sheet, "2" verified, Add item, stopped at payment, 58 s |
+| same, with the 2 still in the cart | T5 + T7 stale cart | "already in the cart (2)", nothing added, stopped before checkout, 40 s |
+| Order a Margherita pizza from Domino's on Zomato and deliver it to work | T6 address | picked the saved "Work" address first, then (Margherita already in the cart) went straight to checkout, 43 s |
+| book a cab to the railway station | T12 unknown task | "I haven't learned that yet. Do you want to teach me?" |
+| did the last run succeed? | T14 run log | "Your last run, Order Margherita pizza from Domino's on Zomato, at 2:45 PM, went as far as it safely could and stopped at checkout for you to finish." |
+
+The first attempt at "two Margherita pizzas" went wrong: the offline template matcher read the item
+as "two margherita pizzas", so no quantity was set and the cart ended with one. A value that starts
+with a number now goes to the language model, which reads `item = Margherita pizza, quantity = 2`.
+
 ## What the hand demo broke, and the fixes
 - **Wrong slot and a lost ADD.** The ADD button's "card" was a small box holding only "customisable";
   the dish name sat two levels up. The card of a repeated button is now the largest ancestor holding

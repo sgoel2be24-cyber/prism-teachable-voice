@@ -224,6 +224,8 @@ object Generaliser {
 
 /** Maps a new command onto a learned recipe (template match). The LLM matcher handles paraphrases. */
 object Matcher {
+    private val QTY_START = Regex("^(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|a couple of|a few)\\b", RegexOption.IGNORE_CASE)
+
     class Match(val recipe: JSONObject, val slots: Map<String, String>, val how: String)
 
     fun examples(r: JSONObject): Map<String, String> {
@@ -248,6 +250,8 @@ object Matcher {
             // A value that swallowed an extra request ("dominos and deliver it to work", "2 of them
             // please") means the command says more than the template: let the language model read it.
             if (values.values.any { v -> v.split(' ').size > 4 || Regex("\\b(and|with|to|for|then|deliver|please)\\b").containsMatchIn(v) }) continue
+            // "two margherita pizzas" carries a quantity the template has no place for.
+            if (values.filterKeys { it != "quantity" }.values.any { v -> QTY_START.containsMatchIn(v) }) continue
             return Match(r, values, "template")
         }
         return null
