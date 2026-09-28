@@ -58,7 +58,6 @@ class Executor(private val svc: TvaAccessibilityService) {
         val llmTapped: MutableList<String> = ArrayList(), // what the LLM tapped while working on the current step
         val tapCounts: HashMap<String, Int> = HashMap(), // how often the LLM picked each action this run
         var alreadyHad: Boolean = false, // the last add step found the item already in the cart
-        var afterType: Boolean = false, // the previous step typed (suggestions may still be loading)
         var next: JSONObject? = null, // the step after the current one, to recognise its screen
     )
 
@@ -191,7 +190,6 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val s0 = System.currentTimeMillis()
                 c.next = (i + 1 until steps.length()).map { steps.getJSONObject(it) }.firstOrNull { !it.optBoolean("noise") }
                 val r = runStep(st, c)
-                c.afterType = st.optString("kind") == "type"
                 record(i, desc, r, System.currentTimeMillis() - s0)
                 if (!r.ok) { outcome = r.outcome; reason = r.note; stoppedAt = i; break }
                 c.history.add(short)
@@ -202,7 +200,11 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val until = System.currentTimeMillis() + 4000
                 do {
                     svc.settle(600, 3000)
-                    if (Guard.atPaymentStep(svc.snapshot(), c.app)) { outcome = "handover"; reason = "payment"; break }
+                    val end = svc.snapshot()
+                    if (Guard.atPaymentStep(end, c.app)) {
+                        // On the payment page itself, or on a cart/confirmation with a pay button showing.
+                        outcome = "handover"; reason = if (Guard.screenBlock(end, c.app) == "payment") "payment" else "checkout"; break
+                    }
                 } while (System.currentTimeMillis() < until)
             }
         } catch (e: CancellationException) {
@@ -223,8 +225,11 @@ class Executor(private val svc: TvaAccessibilityService) {
             svc.store.appendRun(rec)
             val msg = when (outcome) {
                 "success" -> "Done: $done. Please review it and complete the payment yourself."
-                "handover" -> if (reason == "payment") "Done: $done. I've stopped at the payment page. Your turn."
-                    else "I've stopped at $reason. Your turn."
+                "handover" -> when (reason) {
+                    "payment" -> "Done: $done. I've stopped at the payment page. Your turn."
+                    "checkout" -> "Done: $done. I've stopped before checkout; paying is up to you."
+                    else -> "I've stopped at $reason. Your turn."
+                }
                 "stopped" -> "Stopped."
                 "asked" -> "I've paused: $reason."
                 else -> "I couldn't finish: $reason."
@@ -399,9 +404,7 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (llmActs == 0 && want.length >= 3 && want in prevTapped) {
                 return StepResult(true, "success", "skip", "already done while finishing the previous step")
             }
-            // Let a loading screen finish first. Right after typing, suggestions can take several
-            // seconds on a slow connection, and scrolling the half-built list only hides them.
-            if (elapsed < (if (c.afterType) 8000 else 2500)) { delay(400); continue }
+            if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
             // Web-based result pages can sit blank (only the top bar and tab bar) for several seconds
             // on a slow connection; scrolling or asking the LLM about an empty page goes nowhere.
             if (elapsed < 15000 && blank(snap, c.app)) { delay(500); continue }
@@ -434,12 +437,12 @@ class Executor(private val svc: TvaAccessibilityService) {
             // "Add item") has nothing to do.
             if (skipIfMissing && llmActs == 0) return StepResult(true, "success", "skip", "nothing to confirm: the item was already in the cart")
             // Cheap before clever: the element is often just below the fold (a sponsored banner
-            // pushed the first result down). Up to three thumb scrolls with the fast matcher, then the LLM.
-            if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 3) && !c.cross) {
+            // pushed the first result down). Up to five thumb scrolls with the fast matcher, then the LLM.
+            if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 5) && !c.cross) {
                 val s0 = sig(snap, c.app)
                 scrollOnce(snap, c.app, forward = true)
                 preScrolls++
-                if (sig(svc.snapshot(), c.app) == s0) preScrolls = 3 else scrolls++ // screen doesn't scroll
+                if (sig(svc.snapshot(), c.app) == s0) preScrolls = 5 else scrolls++ // screen doesn't scroll
                 continue
             }
             // An item far down a long menu: use the page's own "Search in …" box once, then match again.
@@ -733,6 +736,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         if (nodes.isNotEmpty() && nodes.map { it.normLabel }.filter { it.isNotEmpty() }.distinct().size <= 2) return true
         val top = (s.screenH * 0.2).toInt()
         val bottom = (s.screenH * 0.85).toInt()
+        // A spinner in the middle of an otherwise empty page (Zomato's suggestions while loading).
+        if (nodes.any { it.shortCls == "ProgressBar" && it.bounds.centerY() in top..bottom } &&
+            nodes.count { it.bounds.centerY() in top..bottom && it.label.isNotEmpty() } < 3) return true
         return nodes.count {
             it.bounds.centerY() in top..bottom && it.bounds.height() < s.screenH / 2 && (it.label.isNotEmpty() || it.clickable)
         } < 3
