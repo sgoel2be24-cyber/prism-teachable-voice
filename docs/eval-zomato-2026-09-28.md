@@ -88,6 +88,28 @@ The first attempt at "two Margherita pizzas" went wrong: the offline template ma
 as "two margherita pizzas", so no quantity was set and the cart ended with one. A value that starts
 with a number now goes to the language model, which reads `item = Margherita pizza, quantity = 2`.
 
+## T7: the shop can't take the order (14:50–15:00 IST, raining)
+
+With the Domino's recipe, asked for pizza/burgers from other restaurants. It was raining, and every
+restaurant that uses Zomato's delivery partners showed "Currently not accepting orders".
+
+| Command | Outcome |
+|---|---|
+| Order a Margherita pizza from Pizza Hut on Zomato | before the fix: the model dismissed the notice with OK, tapped ADD again, and once tapped "Schedule for later"; failed after 91 s |
+| Order a McAloo Tikki burger from McDonald's on Zomato | "I couldn't finish: the app says 'Currently not accepting orders as delivery partners are unavailable due to rain'", 18 s |
+| Order a Margherita pizza from La Pino'z on Zomato | same message, 34 s |
+| Order a Margherita pizza from Oven Story on Zomato | "…the app says 'Currently not accepting orders'", 28 s |
+
+The executor now recognises these notices ("not accepting orders", "currently closed", "delivery
+partners are occupied", "not delivering to…") when the next button can't be found, and stops with
+the app's own words instead of dismissing and retrying. The model has the same rule ("fail" with a
+reason).
+
+Also added, not yet exercised because no other restaurant was open: a dialog that would throw
+away something the user has (Zomato's "replace cart?" when the cart holds another restaurant's
+items) makes the assistant ask, e.g. "Your cart has items from Domino's. Replace them with this
+order?". "No" leaves the cart as it is and stops.
+
 ## What the hand demo broke, and the fixes
 - **Wrong slot and a lost ADD.** The ADD button's "card" was a small box holding only "customisable";
   the dish name sat two levels up. The card of a repeated button is now the largest ancestor holding

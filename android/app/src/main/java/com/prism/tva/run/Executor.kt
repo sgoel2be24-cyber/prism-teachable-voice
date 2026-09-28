@@ -41,6 +41,10 @@ class Executor(private val svc: TvaAccessibilityService) {
         private val RETRY = setOf("try again", "retry", "tap to retry", "reload", "refresh")
         private val APP_ERROR = Regex("went wrong|no internet|connection|couldn.?t load|unable to load|oops|error|offline",
             RegexOption.IGNORE_CASE)
+        // The shop can't take the order right now: say so instead of dismissing the notice and retrying.
+        private val UNAVAILABLE = Regex("not accepting (any )?orders|currently closed|temporarily closed|restaurant is closed|" +
+            "store is closed|delivery partners are (occupied|busy)|not delivering to|does ?n.?t deliver to|outside (the )?delivery area|" +
+            "not serviceable|unserviceable", RegexOption.IGNORE_CASE)
     }
 
     class StepResult(val ok: Boolean, val outcome: String, val method: String, val note: String)
@@ -334,6 +338,7 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (verifying) {
                 // Let a loading screen finish before judging the result.
                 if (blank(snap, c.app) && System.currentTimeMillis() - start < 45000) { delay(700); continue }
+                unavailable(snap, c.app)?.let { return it }
                 // The screen moved on and the next step's button is plainly there: this step did its
                 // job. (Asked instead, the model tends to carry on with the following steps itself.)
                 val nx = c.next
@@ -398,6 +403,7 @@ class Executor(private val svc: TvaAccessibilityService) {
                     "score=%.1f next=%.1f %s".format(m.score, m.runnerUp, m.why))
             }
             val elapsed = System.currentTimeMillis() - start
+            unavailable(snap, c.app)?.let { return it }
             // The LLM already pressed this very button while finishing the previous step (e.g. it
             // tapped "Add item" itself): don't look for it again.
             val want = Text.stable(st.optJSONObject("target")?.let { it.optString("leafLabel").ifEmpty { it.optString("label") } }.orEmpty())
@@ -605,6 +611,11 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val ans = svc.asker.ask(d.question ?: "I'm stuck here. What should I do?")
                     ?: return StepResult(false, "asked", "ask", d.question ?: d.reason) to true
                 c.history.add("the user answered \"${d.question}\" with \"$ans\"")
+                // "Replace your cart?" — "No": leave everything as it is and hand back.
+                if (Regex("replace|clear|discard|remove|reset|lose", RegexOption.IGNORE_CASE).containsMatchIn(d.question ?: "") &&
+                    Regex("^(no|nope|nah|don t|dont|do not|cancel|keep|leave|nahi|mat)\\b").containsMatchIn(Text.norm(ans))) {
+                    return StepResult(false, "asked", "ask", "you chose to keep what's there, so I left it as it is") to true
+                }
                 val q2 = Text.norm(d.question ?: "")
                 c.slots[listOf("size", "colour", "color", "variant", "flavour", "address", "time").firstOrNull { q2.contains(it) } ?: "answer"] = ans
                 revealOption(ans, c)
@@ -688,6 +699,14 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (!kept) return false
         }
         return true
+    }
+
+    /** The app says the shop can't take the order now ("Currently not accepting orders"): stop and say so. */
+    private fun unavailable(snap: Snapshot, app: String): StepResult? {
+        val n = snap.appNodes(app).firstOrNull { it.label.length < 200 && UNAVAILABLE.containsMatchIn(it.label) } ?: return null
+        val said = n.label.replace(Regex("\\s+"), " ").trim().trimEnd('.')
+        Dbg.log("UNAVAILABLE \"$said\"")
+        return StepResult(false, "failed", "unavailable", "the app says \"$said\"")
     }
 
     /** A step that only closes a pop-up (its button is "Got it", "Not now", "✕"...), not part of the task. */
