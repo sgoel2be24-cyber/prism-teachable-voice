@@ -52,3 +52,21 @@ Taught on Amazon only. The LLM drives each step in Myntra, and the Guard still a
 | search for a laptop backpack on myntra and add the first result to my bag | success | 54 s | 15 | one-size item |
 | search for sneakers on myntra and add the first result to my bag | success | 52 s | 13 | asked "Which size?", answered "9"; verified in the bag |
 | search for trekking shoes on myntra and add the first result to my bag | success | 64 s | 14 | asked size; scrolled the size row to find 9 |
+
+## Regression after the Zomato reliability changes (28 Sep, 14:24–14:34 IST)
+
+Same recipe, same cold-start method (`recon/repeat_bench.sh`), phone on a phone hotspot.
+
+| Command | Runs | Result |
+|---|---|---|
+| Search for wireless earbuds on Amazon and add the first result to cart | 3 | 2 passed (45–48 s, 1–4 LLM calls); 1 failed |
+| i need a desk lamp, add the first one on amazon to my cart | 2 | 2 passed, 36–37 s, 0 LLM calls |
+| put a notebook in my amazon cart | 1 | passed, 37 s, 0 LLM calls |
+| amazon pe pencil box search karke pehla result cart mein daal do | 1 | passed, 35 s, 0 LLM calls |
+| find a phone stand on amazon and add the top result to my cart | 1 | passed, 29 s, 0 LLM calls |
+
+**7/8.** For earbuds the first "Add to cart" now sits below several sponsored rows, so the fast
+path gives up and the model scrolls on. In the failed run the model tapped the first product's
+title instead; that added the item (Amazon's "added to cart" page, cart count up) but the model
+didn't recognise that page as proof and ran out of time. Runs now end with "I've stopped before
+checkout" when a pay/checkout button is on screen.
