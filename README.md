@@ -14,6 +14,19 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 - **Reliable replay.** A fast path does scored element matching with no network call. The language model steps in only when the screen differs (pop-ups, unseen screens), and the user is asked when a value is missing or the screen can't be handled.
 - **Safety.** A payment/login/OTP/password guard is checked on every action.
 - **Run log**, spoken replies, and an on-screen status pill with Stop.
+- **Noisy demonstrations.** Switching to another app mid-demo (and the back gesture used to return) is dropped from the learned task.
+- **Another app, same task.** A task taught on Amazon runs on Myntra: the language model finds the equivalent buttons ("Add to Bag"), asks for a size instead of choosing one, and checks the bag before reporting success.
+
+## Measured on the phone (Oppo Reno3, Android 12)
+
+| What | Result |
+|---|---|
+| Replay across sessions (Amazon force-stopped before every run; exact, new values, paraphrases, Hinglish) | 8/8, median 21.9 s, 39/40 steps without the language model |
+| Learn success (teach once, replay once with a new value; one demo with an app-switch detour) | 4/4 |
+| Command understanding (Amazon test set) | 18/18, median 1.1 s |
+| Cross-app: taught on Amazon, run on Myntra | 3/3 (52–64 s; asks for size) |
+
+Tables and method: [docs/eval-replay-sessions-2026-09-28.md](docs/eval-replay-sessions-2026-09-28.md)
 
 Details: [docs/architecture.md](docs/architecture.md) · recon of the target apps: [docs/recon-zomato.md](docs/recon-zomato.md) · recording/replay study: [docs/spike-results.md](docs/spike-results.md)
 
@@ -36,6 +49,10 @@ printf '%s' "fw_your_fireworks_key" > .fireworks_key      # optional; enables th
 cd android && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+The APK handed out (`assembleRelease`) takes its key from `.fireworks_key_submission` instead, so a
+separate, spend-limited key can ship in it. Both key files are git-ignored; keys never appear in
+source. Any key can be replaced at runtime in the app's **Language model key** field.
 
 Or with Docker:
 
@@ -61,4 +78,8 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 
 - Needs a Fireworks API key for paraphrases, pop-up handling, quantity/address changes and questions; exact and template commands work offline.
 - The overlay adds about 0.2 s to each tap while teaching (replay is unaffected).
-- A task is learned from one demonstration in one app; running it in a similar app relies on the language model step by step.
+- A task is learned from one demonstration in one app; running it in a similar app relies on the language model step by step, so it is slower (about 50–60 s on Myntra versus about 20 s on Amazon).
+- The phone must stay unlocked with the screen on while a task runs; accessibility services cannot act on a locked screen.
+- Web-based pages (Amazon's results) can take several seconds to appear to accessibility services on a slow connection; the assistant waits up to 15 s per step.
+- Spoken answers use the phone's speech recogniser (English, India); in a noisy room, typing the answer in the app works too.
+- It never picks personal options (size, colour, address) on its own: it asks. It never pays, places an order or enters a login, OTP or password.

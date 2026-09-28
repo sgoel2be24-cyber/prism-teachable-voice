@@ -209,6 +209,12 @@ class TvaAccessibilityService : AccessibilityService() {
         scope.launch {
             val u = utterance.trim()
             if (u.isEmpty()) return@launch
+            // A question is pending mid-run: whatever is typed or said in the app answers it.
+            if (asker.waiting) {
+                Dbg.log("UTTERANCE answers the pending question: \"$u\"")
+                asker.answer(u)
+                return@launch
+            }
             // Some recognizers deliver the same result twice; a second copy would cancel the first run.
             val now = System.currentTimeMillis()
             if (Text.norm(u) == lastUtterance && now - lastUtteranceAt < 5000) {
