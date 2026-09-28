@@ -26,6 +26,7 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 | Command understanding (Amazon test set) | 18/18, median 1.1 s |
 | Cross-app: taught on Amazon, run on Myntra | 3/3 (52–64 s; asks for size) |
 | Zomato, taught once by hand (with a mis-tap and a pop-up in the demo): exact, paraphrase, new pizza, two pizzas, deliver to Work, "order something" | 6/6, 29–78 s, 35/38 steps without the language model |
+| Zomato repeatability, to the payment page: the judges' sentence ×3 and "I want to order margherita pizza on zomato" (asks the restaurant) ×3, cold start each time | 6/6, 35–44 s, no language-model calls; stops at payment every time |
 
 Tables and method: [docs/eval-replay-sessions-2026-09-28.md](docs/eval-replay-sessions-2026-09-28.md) · [docs/eval-zomato-2026-09-28.md](docs/eval-zomato-2026-09-28.md)
 
@@ -82,5 +83,6 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 - A task is learned from one demonstration in one app; running it in a similar app relies on the language model step by step, so it is slower (about 50–60 s on Myntra versus about 20 s on Amazon).
 - The phone must stay unlocked with the screen on while a task runs; accessibility services cannot act on a locked screen.
 - Web-based pages (Amazon's results) can take several seconds to appear to accessibility services on a slow connection; the assistant waits up to 15 s per step.
+- On a failing connection the target app itself stalls (Zomato's suggestions spin, "Something went wrong"). The assistant taps the app's "Try Again" up to three times and then reports where it stopped; it can't fix the network.
 - Spoken answers use the phone's speech recogniser (English, India); in a noisy room, typing the answer in the app works too.
 - It never picks personal options (size, colour, address) on its own: it asks. It never pays, places an order or enters a login, OTP or password.

@@ -26,6 +26,51 @@ and say "complete the payment yourself"; the guard recognises Zomato's payment p
 (`PaymentsOptionsActivityV5`, "Bill total", "Pay by any UPI app") and "Add Payment Method" is on the
 never-tap list. Pop-ups (T7): the voucher pop-up was dismissed by the LLM when it covered the cart.
 
+## Repeatability: the same commands, again and again (13:38–14:23 IST)
+
+The task was re-taught at 12:51 so the demo ends on Zomato's payment step (Continue → voucher
+"Got it" → Continue). Each command was then run several times from a cold start
+(`recon/repeat_bench.sh`, which saves the screen of any failed run). A run passes if it stops at
+the payment page with exactly one Margherita in the cart.
+
+| Command | Test | Final batch (stable network) |
+|---|---|---|
+| Order a Margherita pizza from Domino's on Zomato | T2, the judges' sentence | 3/3, 35–41 s, 0 LLM calls |
+| I want to order margherita pizza on zomato | T3, asks "Which restaurant…?" | 3/3, 39–44 s, 0 LLM calls |
+
+Then once each, same conditions:
+
+| Command | Test | Outcome |
+|---|---|---|
+| order Margarita pizza from Domino's on Zomato (the taught sentence) | T2 exact | payment handover, 46 s, 0 LLM calls |
+| Get me a margherita from dominos | T3 paraphrase | payment handover, 38 s, 0 LLM calls |
+| Order pizza. | T13 ambiguity | asked "Which restaurant…?" and "Which pizza…?", then payment handover, 39 s |
+
+All nine stopped on the payment step without tapping anything there. One of them said "complete
+the payment yourself" rather than "I've stopped at the payment page", because the cart's payment
+bar was still loading when the run ended; the end-of-run check now waits up to 4 s for it.
+
+Earlier batches failed 2 out of 5 times on the judges' sentence, and each failure showed a real bug:
+
+- **A swipe typed into the search box.** After using Domino's own "Search in…" box the keyboard stays
+  up; a scroll swipe that crossed it was read as glide typing ("margherita pizza by by by by").
+  Swipes now stay above the keyboard, and the keyboard is closed after the page search.
+- **The pizza was already in the cart.** The model saw it (the card shows − 1 +), but the next step
+  still waited for the options sheet. The cart check now runs before matching, and an add step
+  found already done skips the "Add item" step.
+- **A false "done".** The model took "In your Collection" (Zomato's saved-dishes tag) as proof of
+  the cart; only a − 1 + stepper or a "1 item added" bar counts now.
+
+Two batches ran on a failing Wi-Fi (Zomato's search suggestions spinning for over a minute, its
+"Something went wrong · Try Again" page, model calls timing out). They are not counted above, but
+they led to: tapping the app's own "Try Again", waiting longer for suggestions after typing,
+skipping a demo pop-up step ("Got it") when the pop-up doesn't recur, and a hard deadline on
+every model call (one had hung for 138 s).
+
+**T1 (the learned task is inspectable):** the app lists it as "Order {item} from {restaurant} on
+Zomato" with the example values, the 11 steps in words, the ignored step marked "not needed",
+and the two follow-ups ("ensure {quantity} of {item}", "set delivery address to {address}").
+
 ## What the hand demo broke, and the fixes
 - **Wrong slot and a lost ADD.** The ADD button's "card" was a small box holding only "customisable";
   the dish name sat two levels up. The card of a repeated button is now the largest ancestor holding

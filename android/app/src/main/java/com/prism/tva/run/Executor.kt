@@ -198,8 +198,12 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             // The demo ended on the payment page: say so and hand over, rather than just "done".
             if (outcome == "success") {
-                svc.settle(600, 3000)
-                if (Guard.atPaymentStep(svc.snapshot(), c.app)) { outcome = "handover"; reason = "payment" }
+                // The cart page can take a moment to load its payment bar.
+                val until = System.currentTimeMillis() + 4000
+                do {
+                    svc.settle(600, 3000)
+                    if (Guard.atPaymentStep(svc.snapshot(), c.app)) { outcome = "handover"; reason = "payment"; break }
+                } while (System.currentTimeMillis() < until)
             }
         } catch (e: CancellationException) {
             outcome = "stopped"; reason = "stopped by the user"
