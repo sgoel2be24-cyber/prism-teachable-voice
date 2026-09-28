@@ -38,6 +38,11 @@ class Executor(private val svc: TvaAccessibilityService) {
             "Don't edit or add an address."
         private val DISMISS = setOf("got it", "ok", "okay", "close", "not now", "skip", "cancel", "later", "maybe later",
             "no thanks", "dismiss", "x", "understood", "continue shopping")
+        private val ADDISH = Regex("add to (cart|bag|basket)|^add( item)?\\b", RegexOption.IGNORE_CASE)
+        private val CART_COUNT = listOf(
+            Regex("^(?:cart|bag|basket)\\W+(\\d+) items?\\b", RegexOption.IGNORE_CASE),
+            Regex("^(\\d+) items? (?:added|in (?:your )?(?:cart|bag))", RegexOption.IGNORE_CASE),
+        )
         private val RETRY = setOf("try again", "retry", "tap to retry", "reload", "refresh")
         private val APP_ERROR = Regex("went wrong|no internet|connection|couldn.?t load|unable to load|oops|error|offline",
             RegexOption.IGNORE_CASE)
@@ -63,6 +68,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         val tapCounts: HashMap<String, Int> = HashMap(), // how often the LLM picked each action this run
         var alreadyHad: Boolean = false, // the last add step found the item already in the cart
         var next: JSONObject? = null, // the step after the current one, to recognise its screen
+        var cartBefore: Int? = null, // cart count just before the last "Add to cart" press
     )
 
     @Volatile private var job: Job? = null
@@ -330,6 +336,11 @@ class Executor(private val svc: TvaAccessibilityService) {
         var verifying = false
         var startSig: Int? = null
         var retries = 0
+        var llmFrom = 0L // when the model first looked at this step
+        // The previous step pressed "Add to cart": if the cart count has gone up since, a following
+        // "confirm" step (the product page's own add button) has nothing left to do.
+        val cartBefore = c.cartBefore
+        c.cartBefore = null
         while (true) {
             svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
@@ -386,6 +397,7 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (m != null) {
                 guardTap(snap, m.node)?.let { return it }
                 val long = st.optString("kind") == "longpress"
+                if (ADDISH.containsMatchIn(Brain.display(snap, m.node, 40).ifEmpty { m.node.label })) c.cartBefore = cartCount(snap, c.app) ?: 0
                 var ok = press(m.node, long)
                 svc.settle(350, 3000)
                 // Zomato ignores accessibility clicks on some views (its "Continue" bar, the
@@ -442,6 +454,15 @@ class Executor(private val svc: TvaAccessibilityService) {
             // The item was already in the cart, so the step confirming the add (the options sheet's
             // "Add item") has nothing to do.
             if (skipIfMissing && llmActs == 0) return StepResult(true, "success", "skip", "nothing to confirm: the item was already in the cart")
+            // "Add to cart" on the results page put it straight in (no options page this time): the
+            // demo's second add button, on the product page, isn't needed.
+            if (cartBefore != null && llmActs == 0) {
+                val now = cartCount(snap, c.app)
+                if (now != null && now > cartBefore) {
+                    c.history.add("the item went straight into the cart (cart $cartBefore → $now)")
+                    return StepResult(true, "success", "skip", "the item went straight into the cart ($cartBefore → $now)")
+                }
+            }
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to five thumb scrolls with the fast matcher, then the LLM.
             if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 5) && !c.cross) {
@@ -463,7 +484,12 @@ class Executor(private val svc: TvaAccessibilityService) {
             // lot) may need the page's own search: both get a bigger budget.
             val far = st.optInt("scrollsBefore") >= 8
             val big = c.cross || far
-            if (Fireworks.available && llmActs < (if (big) 12 else 8) && elapsed < (if (big) 45000 else 26000)) {
+            // Scrolling a web page (Amazon's results) can eat the whole budget before the model has
+            // looked once: it always gets a first look and ~15 s of its own.
+            val llmElapsed = if (llmFrom == 0L) 0L else System.currentTimeMillis() - llmFrom
+            if (Fireworks.available && llmActs < (if (big) 12 else 8) &&
+                (llmActs == 0 || elapsed < (if (big) 45000 else 26000) || llmElapsed < 15000)) {
+                if (llmFrom == 0L) llmFrom = System.currentTimeMillis()
                 llmActs++
                 method = "llm"
                 val t = System.currentTimeMillis()
@@ -475,12 +501,13 @@ class Executor(private val svc: TvaAccessibilityService) {
                     hint += " If \"$anchorValue\" is already in the cart with at least $qty (its card shows − $qty + instead of ADD), reply done pointing at that quantity; don't add another."
                 }
                 val r = llmAct(stepText(st, c) + demoHint(st) + hint, c, snap) ?: continue
-                if (r.first.method == "ask") start += System.currentTimeMillis() - t // waiting for the user doesn't count
+                if (r.first.method == "ask") { start += System.currentTimeMillis() - t; llmFrom += System.currentTimeMillis() - t } // waiting for the user doesn't count
                 if (r.second && r.first.method == "llm" && r.first.ok) { verifying = true; checks++; continue }
                 if (r.second) return r.first // done, handed over, asked, or failed
                 continue
             }
-            if (elapsed > (if (llmActs > 0) (if (big) 50000 else 30000) else 15000) || scrolls >= 12) {
+            val overall = if (llmActs > 0) (if (big) 50000 else 30000) else 15000
+            if ((elapsed > overall && (llmActs == 0 || System.currentTimeMillis() - llmFrom > 20000)) || scrolls >= 12) {
                 return StepResult(false, "failed", "notfound", "I couldn't find ${Generaliser.describe(st, c.slots).removePrefix("Tap ")} on this screen")
             }
             if (scrollOnce(snap, c.app, forward = scrolls < 6)) scrolls++ else delay(400)
@@ -699,6 +726,15 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (!kept) return false
         }
         return true
+    }
+
+    /** Items in the cart as the app shows it: Amazon's "Cart 5 items" tab, Zomato's "1 item added" bar. */
+    private fun cartCount(s: Snapshot, app: String): Int? {
+        for (n in s.appNodes(app)) {
+            val l = n.label.trim()
+            CART_COUNT.firstNotNullOfOrNull { rx -> rx.find(l)?.groupValues?.get(1)?.toIntOrNull() }?.let { return it }
+        }
+        return null
     }
 
     /** The app says the shop can't take the order now ("Currently not accepting orders"): stop and say so. */

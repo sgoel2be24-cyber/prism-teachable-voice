@@ -200,7 +200,11 @@ class Snapshot(
      * (backgrounds, transparent wrappers) let it fall through to what is underneath.
      */
     private fun dispatch(n: UiNode, x: Int, y: Int): UiNode? {
-        if (!n.visible || !n.bounds.contains(x, y)) return null
+        if (!n.visible) return null
+        // Amazon's results page nests a WebView that reports a 42-px-high box around the whole page,
+        // so the finger is "outside" it while its content boxes are right. Look inside web views anyway.
+        val inside = n.bounds.contains(x, y)
+        if (!inside && !n.shortCls.endsWith("WebView")) return null
         var underList: UiNode? = null
         for (c in n.children.asReversed()) {
             val hit = dispatch(nodes[c], x, y) ?: continue
@@ -213,7 +217,7 @@ class Snapshot(
             return hit
         }
         underList?.let { return it }
-        return if (n.clickable || n.editable || n.longClickable) n else null
+        return if (inside && (n.clickable || n.editable || n.longClickable)) n else null
     }
 
     /** Whether [hit] sits inside a scrolling container below [top]. */

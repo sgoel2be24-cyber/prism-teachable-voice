@@ -70,3 +70,31 @@ path gives up and the model scrolls on. In the failed run the model tapped the f
 title instead; that added the item (Amazon's "added to cart" page, cart count up) but the model
 didn't recognise that page as proof and ran out of time. Runs now end with "I've stopped before
 checkout" when a pay/checkout button is on screen.
+
+## T8/T9: Amazon taught by hand (28 Sep, 15:57–16:14 IST)
+
+Shikhar taught "search for wireless earbuds on Amazon and add the first result to cart" by hand.
+The app confirmed: "Learned: Add wireless earbuds to cart on Amazon. 8 steps."
+
+**What went wrong first, and the fixes**
+- *The old, script-taught Amazon task was used.* The phone heard "add the first result to card",
+  so the offline template missed and the model picked the older of two identical tasks. A task
+  taught again (same app, same command shape) now replaces the older one for matching.
+- *Two taps recorded with no target.* Amazon's results page nests a WebView that reports a 42-px-high
+  box around the whole page, so the tap on "Add to cart" fell "outside" it and hit-testing found
+  nothing. Hit-testing now looks inside web views regardless of their own box. The recording was
+  re-learned from its saved screens (`REBUILD`): "Tap 'Add to cart' for the first result", the
+  repeat tap marked as not needed, then the product page's own add button, and the
+  protection-plan pop-up marked as not needed.
+- *The product page's add button isn't always there.* For some results "Add to cart" opens the
+  product page (to pick a colour/variant); for others it adds straight away. If the cart count
+  went up after the first add, the second add step is skipped ("the item went straight into the
+  cart (20 → 21)").
+- *Five scrolls on a web page used up the model's time* before it looked once; the model now always
+  gets a first look and ~15 s of its own.
+
+| Command | Test | Outcome |
+|---|---|---|
+| Search for a phone case on Amazon and add the first result to cart | T9 | added from the results page (cart 20 → 21), 46 s, 0 LLM calls |
+| Search for wireless earbuds on Amazon and add the first result to cart | T8 replay | results "Add to cart" → product page → its add button → stopped before checkout, 35 s, 0 LLM calls |
+| Order a Margherita pizza from Domino's on Zomato | regression | reached checkout, 40 s, 0 LLM calls |

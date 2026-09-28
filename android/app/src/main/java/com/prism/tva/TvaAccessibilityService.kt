@@ -178,7 +178,11 @@ class TvaAccessibilityService : AccessibilityService() {
         fun done(kind: String, r: JSONObject? = null, s: Map<String, String> = emptyMap(), how: String = "", other: String? = null, missing: List<String> = emptyList()) =
             Resolution(kind, r, s, how, other, missing, System.currentTimeMillis() - t0)
         if (looksLikeStatusQuery(u)) return done("status", how = "keywords")
-        val recipes = store.recipes()
+        // A task taught again (same app, same command shape) replaces the older version for matching;
+        // otherwise the model may pick the stale one. The old one stays listed in the app.
+        val shape = { r: JSONObject -> r.optString("app") + "|" + r.optString("template").lowercase().replace(Regex("\\{[a-z0-9_]+\\}"), "{}").replace(Regex("\\s+"), " ").trim() }
+        val recipes = store.recipes().groupBy(shape).values.map { g -> g.maxByOrNull { it.optString("id") }!! }
+            .sortedBy { it.optString("id") }
         // 1. Same words as a taught command (or its template): no network needed.
         Matcher.match(u, recipes)?.let { m -> return done("run", m.recipe, m.slots, m.how) }
         // 2. Paraphrases, changed values, other apps, missing values: LLM.
