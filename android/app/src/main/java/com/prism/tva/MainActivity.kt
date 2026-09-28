@@ -218,7 +218,11 @@ class MainActivity : Activity() {
         card.addView(TextView(this).apply { text = sb.toString().trimEnd(); textSize = 13f; setPadding(0, d(6f), 0, d(6f)) })
         card.addView(Button(this).apply {
             text = "Delete"; isAllCaps = false
-            setOnClickListener { TvaAccessibilityService.instance?.store?.deleteRecipe(r.getString("id")); render() }
+            // Two taps: a stray tap while scrolling the list shouldn't lose a taught task.
+            setOnClickListener {
+                if (text.toString() == "Delete") { text = "Tap again to delete"; postDelayed({ text = "Delete" }, 4000); return@setOnClickListener }
+                TvaAccessibilityService.instance?.store?.deleteRecipe(r.getString("id")); render()
+            }
         })
         return card
     }

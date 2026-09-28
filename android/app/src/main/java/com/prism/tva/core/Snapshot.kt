@@ -201,8 +201,31 @@ class Snapshot(
      */
     private fun dispatch(n: UiNode, x: Int, y: Int): UiNode? {
         if (!n.visible || !n.bounds.contains(x, y)) return null
-        for (c in n.children.asReversed()) dispatch(nodes[c], x, y)?.let { return it }
+        var underList: UiNode? = null
+        for (c in n.children.asReversed()) {
+            val hit = dispatch(nodes[c], x, y) ?: continue
+            // Child order isn't drawing order when views are raised (elevation): a fixed bar or
+            // button over a scrolling list (Zomato's "1 item added · Continue") comes before the
+            // list in the tree but is drawn on top of it. Prefer a small fixed element over a list
+            // item under the same point; a full-screen backdrop doesn't count.
+            if (inList(hit, n)) { if (underList == null) underList = hit; continue }
+            if (underList != null && area(hit) > screenW.toLong() * screenH / 4) return underList
+            return hit
+        }
+        underList?.let { return it }
         return if (n.clickable || n.editable || n.longClickable) n else null
+    }
+
+    /** Whether [hit] sits inside a scrolling container below [top]. */
+    private fun inList(hit: UiNode, top: UiNode): Boolean {
+        var cur: UiNode? = hit
+        var hops = 0
+        while (cur != null && cur.idx != top.idx && hops < 40) {
+            if (cur.scrollable) return true
+            cur = parentOf(cur)
+            hops++
+        }
+        return false
     }
 
     /** The label the user actually tapped on inside [target] (topmost labelled element under the finger). */

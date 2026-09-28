@@ -81,7 +81,7 @@ Rules:
 - If a pop-up, dialog, banner, tooltip or sheet you did not expect covers the screen, dismiss it (Got it / Close / Not now / Skip / ✕ / Cancel) unless it is part of the goal. A sheet left over from before (a size picker, filters) is not part of the goal: close it with ✕, or tap the large unlabelled backdrop button behind it if back does nothing.
 - If the goal's element is not on screen, scroll (scroll_down / scroll_up) or go back if you are on the wrong page.
 - "Already done this run" says what each of your earlier actions did. Never repeat an action that changed nothing; try something else. A full-screen photo viewer or image gallery is a dead end: go back.
-- If the goal is already satisfied on this screen (for example the item is already in the cart with the right quantity), reply "done" and set "element" to the element that proves it (the item's name in the cart list, an "Added to bag" or "item in your bag" message, the add button of this product now reading "Go to bag" / "Go to cart", a filled field). "Add" buttons on other, similar products further down do not mean this one still needs adding. Being on a cart or bag page is not proof by itself: the item from this run must be listed. If nothing on screen proves it, do not reply done.
+- If the goal is already satisfied on this screen (for example the item is already in the cart with the right quantity), reply "done" and set "element" to the element that proves it (the item's name in the cart list, an "Added to bag" or "item in your bag" message, the add button of this product now reading "Go to bag" / "Go to cart", a filled field). "Add" buttons on other, similar products further down do not mean this one still needs adding. Being on a cart or bag page is not proof by itself: the item from this run must be listed. On a menu or product list, the item's name, price or an "In your collection"/"saved" tag is not proof it is in the cart; its card must show a quantity stepper (− 1 +) instead of ADD, or a bar must say "1 item added" / "View cart". If nothing on screen proves it, do not reply done.
 - Buttons that repeat on every item show which item they belong to ("ADD" for "Margherita Pizza"). Pick the item whose name matches the user's value most exactly ("Margherita Pizza", not "Double Cheese Margherita Pizza" or a combo/meal deal), and never add a different item.
 - The task was demonstrated once, possibly in a different app or on an older screen. Look for the equivalent element even if it is worded differently ("Add to bag" = "Add to cart", "Bag" = "Cart"). If the goal needs an intermediate screen (open the product page to find the add button, open a sheet), take that step yourself.
 - Never tap anything that pays, places an order, or submits a login, password, OTP or PIN. Reply "ask" instead.
@@ -203,7 +203,7 @@ Return JSON only:
 }
 Guidance:
 - Mark a step noise ONLY if the task works without it: a mis-tap that was immediately undone, a tap on something unrelated to the command (e.g. opening another dish's photo after the requested item was added), or dismissing a pop-up (pop-ups are handled automatically at run time).
-- Never mark as noise a step that moves the task forward: one that opens the next screen the demo continues on (compare "screen" with "next_step_screen"), opens a sheet or options for the requested item, or confirms it. Two taps that look alike (a search suggestion, then the restaurant in the results) are usually both needed. Opening the cart or bag at the end to show the result is part of the task.
+- Never mark as noise a step that moves the task forward: one that opens the next screen the demo continues on (compare "screen" with "next_step_screen"), opens a sheet or options for the requested item, or confirms it. Two taps that look alike (a search suggestion, then the restaurant in the results) are usually both needed. Opening the cart or bag at the end, or going on towards checkout/payment ("Continue", "View cart", "Proceed"), is part of the task.
 - Add a "quantity" goal when the task adds an item to a cart (default "1"); place it before the step that confirms adding the item (e.g. "Add item"), or -1 if there is none.
 - Add an "address" goal for food delivery (default ""); place it at -1 (in the cart, make sure the delivery address is {address}).
 - Do not invent other goals."""
@@ -220,13 +220,16 @@ Guidance:
             lines.put(JSONObject().put("i", i).put("kind", s.optString("kind")).put("step", Generaliser.describe(s, ex))
                 .put("slot", s.optString("textSlot").ifEmpty { s.optString("anchorSlot") })
                 .put("element_id", t?.optString("id") ?: "")
+                .put("element_text", t?.optJSONArray("ownLabels")?.let { a -> (0 until minOf(3, a.length())).joinToString(" · ") { a.getString(it) } } ?: "")
                 .put("card_text", t?.optJSONArray("rowLabels")?.let { a -> (0 until minOf(4, a.length())).map { a.getString(it) } } ?: emptyList<String>())
                 .put("screen", s.optString("activity").substringAfterLast('.'))
                 .put("next_step_screen", next?.optString("activity")?.substringAfterLast('.') ?: "(end)"))
         }
         val user = JSONObject().put("command", recipe.optString("command")).put("app", recipe.optString("appLabel"))
             .put("slots", JSONObject(ex as Map<*, *>)).put("steps", lines).toString()
-        return Fireworks.json(REFINE_SYS, user, "refine", effort = "medium", maxTokens = 1500, timeoutMs = 30000)
+        // Reasoning tokens count against max_tokens: leave room so the JSON isn't cut off.
+        return Fireworks.json(REFINE_SYS, user, "refine", effort = "medium", maxTokens = 3500, timeoutMs = 45000)
+            ?: Fireworks.json(REFINE_SYS, user, "refine-retry", effort = "low", maxTokens = 3000, timeoutMs = 30000)
     }
 
     /** The model writes intents with either the old or the new slot names; make them all the new ones. */

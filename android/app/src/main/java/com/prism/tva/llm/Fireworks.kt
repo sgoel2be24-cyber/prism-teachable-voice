@@ -3,7 +3,10 @@ package com.prism.tva.llm
 import com.prism.tva.BuildConfig
 import com.prism.tva.core.Dbg
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -44,9 +47,18 @@ object Fireworks {
                 setRequestProperty("Authorization", "Bearer $key")
                 setRequestProperty("Content-Type", "application/json")
             }
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            // readTimeout is per read, so a reply that trickles in can take minutes (seen: 138 s on a
+            // bad connection). Cut the whole call off at the deadline, or as soon as the caller gives
+            // up (its own timeout, or the user said stop).
+            val finished = AtomicBoolean(false)
+            val watchdog = launch { try { delay(timeoutMs + 2000L) } finally { if (!finished.get()) conn.disconnect() } }
+            val code: Int
+            val text: String
+            try {
+                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                code = conn.responseCode
+                text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            } finally { finished.set(true); watchdog.cancel() }
             if (code !in 200..299) {
                 Dbg.log("LLM[$tag] HTTP $code ${text.take(300)}")
                 return@withContext null

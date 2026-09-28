@@ -150,7 +150,7 @@ class TvaAccessibilityService : AccessibilityService() {
             store.saveRecipe(recipe)
             hud.show("Learning from your demonstration…")
             // Teach-time LLM pass: slot names, step intents, quantity/address goals, noise.
-            withTimeoutOrNull(35000) { Brain.refine(recipe) }?.let { r ->
+            withTimeoutOrNull(80000) { Brain.refine(recipe) }?.let { r ->
                 runCatching { Brain.applyRefinement(recipe, r) }.onSuccess { store.saveRecipe(it) }
                     .onFailure { Dbg.log("REFINE_APPLY_FAILED $it") }
             }

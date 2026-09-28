@@ -27,7 +27,8 @@ for i, r in enumerate(runs, 1):
     else:
         print(f"{i}. {r['outcome']:8} {r['ms']/1000:5.1f}s llm={r['llmCalls']:2}  {r['utterance']}  [{slots}]  {m}  {r.get('reason','')}")
 
-ok = [r for r in runs if r["outcome"] == "success"]
+# Reaching the payment step and handing over is the intended end of a shopping flow.
+ok = [r for r in runs if r["outcome"] == "success" or (r["outcome"] == "handover" and r.get("reason") == "payment")]
 if runs:
     print()
     print(f"Success: {len(ok)}/{len(runs)}")

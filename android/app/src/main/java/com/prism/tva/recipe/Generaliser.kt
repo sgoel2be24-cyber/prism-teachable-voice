@@ -243,7 +243,8 @@ object Matcher {
                 if (m != null) { names.add(m.groupValues[1]); "(.+?)" } else Regex.escape(tok)
             }
             val hit = Regex("^$pattern$").find(u) ?: continue
-            val values = names.mapIndexed { i, n -> n to hit.groupValues[i + 1] }.toMap()
+            // "order a margherita pizza" → item "margherita pizza", not "a margherita pizza".
+            val values = names.mapIndexed { i, n -> n to hit.groupValues[i + 1].replace(Regex("^(a|an|some)\\s+"), "") }.toMap()
             // A value that swallowed an extra request ("dominos and deliver it to work", "2 of them
             // please") means the command says more than the template: let the language model read it.
             if (values.values.any { v -> v.split(' ').size > 4 || Regex("\\b(and|with|to|for|then|deliver|please)\\b").containsMatchIn(v) }) continue

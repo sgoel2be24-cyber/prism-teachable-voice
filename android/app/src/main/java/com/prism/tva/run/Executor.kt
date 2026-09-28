@@ -32,6 +32,17 @@ import org.json.JSONObject
  */
 class Executor(private val svc: TvaAccessibilityService) {
 
+    companion object {
+        private const val ADDRESS_GOAL = "Set the delivery address to the saved address named \"{slot}\": tap the current " +
+            "delivery location (usually at the top of the home screen), then pick \"{slot}\" from the saved addresses. " +
+            "Don't edit or add an address."
+        private val DISMISS = setOf("got it", "ok", "okay", "close", "not now", "skip", "cancel", "later", "maybe later",
+            "no thanks", "dismiss", "x", "understood", "continue shopping")
+        private val RETRY = setOf("try again", "retry", "tap to retry", "reload", "refresh")
+        private val APP_ERROR = Regex("went wrong|no internet|connection|couldn.?t load|unable to load|oops|error|offline",
+            RegexOption.IGNORE_CASE)
+    }
+
     class StepResult(val ok: Boolean, val outcome: String, val method: String, val note: String)
 
     private class Ctx(
@@ -45,6 +56,10 @@ class Executor(private val svc: TvaAccessibilityService) {
         val cross: Boolean = false, // running a recipe in a different app than it was taught in
         val deadEnds: HashMap<Int, MutableSet<String>> = HashMap(), // screen signature -> actions that did nothing there
         val llmTapped: MutableList<String> = ArrayList(), // what the LLM tapped while working on the current step
+        val tapCounts: HashMap<String, Int> = HashMap(), // how often the LLM picked each action this run
+        var alreadyHad: Boolean = false, // the last add step found the item already in the cart
+        var afterType: Boolean = false, // the previous step typed (suggestions may still be loading)
+        var next: JSONObject? = null, // the step after the current one, to recognise its screen
     )
 
     @Volatile private var job: Job? = null
@@ -93,6 +108,15 @@ class Executor(private val svc: TvaAccessibilityService) {
             else "$base — taught in ${recipe.optString("appLabel")}, now doing the same in ${Actions.appLabel(svc, app)} (its buttons and screens differ)",
             cross = appOverride != null)
         val goals = JSONArray((recipe.optJSONArray("goals") ?: JSONArray()).toString())
+        // Delivery address/location: pick it on the home screen right after opening the app (the
+        // restaurant list depends on it), with wording that worked on Zomato.
+        for (g in 0 until goals.length()) {
+            val goal = goals.getJSONObject(g)
+            val k = goal.optString("slot")
+            if (Regex("address|location").containsMatchIn(k) && steps.length() > 1) {
+                goal.put("before", 1).put("instruction", ADDRESS_GOAL.replace("{slot}", "{$k}"))
+            }
+        }
         // Values the user gave that no step or goal uses ("…and deliver to Work" when the demo never
         // touched the address): make them true at the end, before handing over for payment.
         run {
@@ -111,8 +135,7 @@ class Executor(private val svc: TvaAccessibilityService) {
                         // Delivery apps pick the address on the home screen, before the restaurant
                         // list (which depends on it): do it right after opening the app.
                         .put("before", if (place && steps.length() > 1) 1 else -1)
-                        .put("instruction", if (place)
-                            "Set the delivery address to the saved address named \"{$k}\": tap the current delivery location (usually at the top of the home screen), then pick \"{$k}\" from the saved addresses. Don't edit or add an address."
+                        .put("instruction", if (place) ADDRESS_GOAL.replace("{slot}", "{$k}")
                         else "Make sure the ${k.replace('_', ' ')} is {$k} (open the cart or checkout if that's where it is set; do not pay)"))
                 }
         }
@@ -166,10 +189,17 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val desc = if (isLaunch) short else stepText(st, c)
                 svc.hud.update("${i + 1}/${steps.length()} · $short")
                 val s0 = System.currentTimeMillis()
+                c.next = (i + 1 until steps.length()).map { steps.getJSONObject(it) }.firstOrNull { !it.optBoolean("noise") }
                 val r = runStep(st, c)
+                c.afterType = st.optString("kind") == "type"
                 record(i, desc, r, System.currentTimeMillis() - s0)
                 if (!r.ok) { outcome = r.outcome; reason = r.note; stoppedAt = i; break }
                 c.history.add(short)
+            }
+            // The demo ended on the payment page: say so and hand over, rather than just "done".
+            if (outcome == "success") {
+                svc.settle(600, 3000)
+                if (Guard.atPaymentStep(svc.snapshot(), c.app)) { outcome = "handover"; reason = "payment" }
             }
         } catch (e: CancellationException) {
             outcome = "stopped"; reason = "stopped by the user"
@@ -189,7 +219,8 @@ class Executor(private val svc: TvaAccessibilityService) {
             svc.store.appendRun(rec)
             val msg = when (outcome) {
                 "success" -> "Done: $done. Please review it and complete the payment yourself."
-                "handover" -> "I've stopped at $reason. Your turn."
+                "handover" -> if (reason == "payment") "Done: $done. I've stopped at the payment page. Your turn."
+                    else "I've stopped at $reason. Your turn."
                 "stopped" -> "Stopped."
                 "asked" -> "I've paused: $reason."
                 else -> "I couldn't finish: $reason."
@@ -225,7 +256,11 @@ class Executor(private val svc: TvaAccessibilityService) {
                 svc.settle(400, 3000)
                 StepResult(true, "success", "global", "")
             }
-            "tap", "longpress" -> tap(st, c)
+            "tap", "longpress" -> tap(st, c).also { r ->
+                // The model finished an add step without pressing anything: it found the item already
+                // in the cart. Then the next step's options sheet ("Add item") won't appear either.
+                if (st.optString("anchorSlot").isNotEmpty() && r.method == "llm-done" && c.llmTapped.isEmpty()) c.alreadyHad = true
+            }
             "type" -> type(st, c)
             else -> StepResult(true, "success", "skip", "unknown kind ${st.optString("kind")}")
         }
@@ -269,6 +304,9 @@ class Executor(private val svc: TvaAccessibilityService) {
     private suspend fun tap(st: JSONObject, c: Ctx): StepResult {
         val prevTapped = c.llmTapped.toSet()
         c.llmTapped.clear()
+        c.tapCounts.clear()
+        val skipIfMissing = c.alreadyHad && st.optString("anchorSlot").isEmpty()
+        c.alreadyHad = false
         var start = System.currentTimeMillis()
         var scrolls = 0
         var preScrolls = 0
@@ -277,11 +315,27 @@ class Executor(private val svc: TvaAccessibilityService) {
         var method = "match"
         var checks = 0 // times we re-checked an LLM "this finishes the step" claim on the resulting screen
         var verifying = false
+        var startSig: Int? = null
+        var retries = 0
         while (true) {
             svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
             guardScreen(snap, c.app)?.let { return it }
+            if (startSig == null) startSig = sig(snap, c.app)
             if (verifying) {
+                // Let a loading screen finish before judging the result.
+                if (blank(snap, c.app) && System.currentTimeMillis() - start < 45000) { delay(700); continue }
+                // The screen moved on and the next step's button is plainly there: this step did its
+                // job. (Asked instead, the model tends to carry on with the following steps itself.)
+                val nx = c.next
+                // (Not when this step's own button is still there too: "Tap dominos" then "Tap dominos".)
+                if (nx != null && nx.optString("kind") in setOf("tap", "longpress") && sig(snap, c.app) != startSig) {
+                    val m = Resolver.resolve(nx, c.slots, snap, c.app)
+                    if (m != null && m.score >= 5.0 && Resolver.resolve(st, c.slots, snap, c.app) == null) {
+                        Dbg.log("VERIFY next step's target is on screen (%.1f)".format(m.score))
+                        return StepResult(true, "success", "llm", "the next step's screen is showing")
+                    }
+                }
                 // The LLM said its last tap finished the step. Check the resulting screen instead of
                 // trusting it (e.g. "Add to bag" does nothing until a size is chosen).
                 if (llmActs >= (if (c.cross) 20 else 12) || System.currentTimeMillis() - start > (if (c.cross) 80000 else 60000)) {
@@ -299,11 +353,37 @@ class Executor(private val svc: TvaAccessibilityService) {
                 if (r.first.method == "llm" && r.first.ok) { checks++; continue }
                 return r.first
             }
+            // The item is already in the cart (left from the teaching demo or an earlier run): its card
+            // shows "− 1 +" instead of ADD. Enough of it there already means the order is as asked.
+            // Checked before matching, or an ADD on a look-alike ("Double Cheese Margherita", a
+            // combo) could be taken instead.
+            val anchorNow = c.slots[st.optString("anchorSlot")].orEmpty()
+            if (anchorNow.isNotEmpty() && !c.cross) {
+                val have = quantityShown(snap, anchorNow, c.app)
+                val want = c.slots["quantity"]?.trim()?.toIntOrNull() ?: 1
+                if (have != null && have >= want) {
+                    Dbg.log("ALREADY_IN_CART \"$anchorNow\" x$have")
+                    c.alreadyHad = true
+                    c.history.add("\"$anchorNow\" was already in the cart ($have); nothing added")
+                    return StepResult(true, "success", "skip", "already in the cart ($have)")
+                }
+            }
             val m = Resolver.resolve(st, c.slots, snap, c.app)
             if (m != null) {
                 guardTap(snap, m.node)?.let { return it }
-                val ok = press(m.node, st.optString("kind") == "longpress")
+                val long = st.optString("kind") == "longpress"
+                var ok = press(m.node, long)
                 svc.settle(350, 3000)
+                // Zomato ignores accessibility clicks on some views (its "Continue" bar, the
+                // location bar). If nothing at all changed, tap it for real, like a finger.
+                if (!long && same(snap, svc.snapshot(), c.app)) {
+                    val cx = m.node.bounds.exactCenterX(); val cy = m.node.bounds.exactCenterY()
+                    if (m.node.bounds.width() > 0 && cy in 0f..snap.screenH.toFloat()) {
+                        Dbg.log("TAP no visible effect; tapping for real")
+                        ok = throughHud { Actions.tap(svc, cx, cy, false) } || ok
+                        svc.settle(350, 3000)
+                    }
+                }
                 if (scrolls > 0 && method == "match") method = "scroll+match"
                 return StepResult(ok, if (ok) "success" else "failed", method,
                     "score=%.1f next=%.1f %s".format(m.score, m.runnerUp, m.why))
@@ -315,10 +395,40 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (llmActs == 0 && want.length >= 3 && want in prevTapped) {
                 return StepResult(true, "success", "skip", "already done while finishing the previous step")
             }
-            if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
+            // Let a loading screen finish first. Right after typing, suggestions can take several
+            // seconds on a slow connection, and scrolling the half-built list only hides them.
+            if (elapsed < (if (c.afterType) 8000 else 2500)) { delay(400); continue }
             // Web-based result pages can sit blank (only the top bar and tab bar) for several seconds
             // on a slow connection; scrolling or asking the LLM about an empty page goes nowhere.
             if (elapsed < 15000 && blank(snap, c.app)) { delay(500); continue }
+            // The app's own network error ("Something went wrong · Try Again"): retry like a person
+            // would, a few times, before spending time on scrolling or the model.
+            if (retries < 3 && snap.appNodes(c.app).any { APP_ERROR.containsMatchIn(it.label) }) {
+                val retry = snap.appNodes(c.app).firstOrNull { n ->
+                    Text.norm(n.label) in RETRY && snap.actionable(n).let { it.clickable && it.visible }
+                }
+                if (retry != null) {
+                    retries++
+                    Dbg.log("APP_ERROR tapping \"${retry.label}\" ($retries)")
+                    c.history.add("the app showed an error; tapped \"${retry.label}\"")
+                    press(snap.actionable(retry))
+                    svc.settle(800, 5000)
+                    start = System.currentTimeMillis()
+                    continue
+                }
+            }
+            // A pop-up the demo dismissed ("Movie voucher unlocked · Got it") often doesn't come back.
+            // Give it a moment to appear; if it hasn't and the next step's button is there, move on.
+            if (llmActs == 0 && isDismissal(st)) {
+                if (elapsed < 4000) { delay(400); continue }
+                val nx = c.next
+                if (nx == null || nx.optString("kind") !in setOf("tap", "longpress") || Resolver.resolve(nx, c.slots, snap, c.app) != null) {
+                    return StepResult(true, "success", "skip", "the pop-up didn't appear this time")
+                }
+            }
+            // The item was already in the cart, so the step confirming the add (the options sheet's
+            // "Add item") has nothing to do.
+            if (skipIfMissing && llmActs == 0) return StepResult(true, "success", "skip", "nothing to confirm: the item was already in the cart")
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to three thumb scrolls with the fast matcher, then the LLM.
             if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 3) && !c.cross) {
@@ -344,7 +454,13 @@ class Executor(private val svc: TvaAccessibilityService) {
                 llmActs++
                 method = "llm"
                 val t = System.currentTimeMillis()
-                val hint = if (far) " In the demonstration the user scrolled a long way down to find it; if this screen has its own search box (e.g. \"Search in …\"), search for it there instead of scrolling." else ""
+                var hint = if (far) " In the demonstration the user scrolled a long way down to find it; if this screen has its own search box (e.g. \"Search in …\"), search for it there instead of scrolling." else ""
+                // A cart left over from an earlier run (or the teaching demo itself) may already hold
+                // the item: then the order is already as asked, and adding another would double it.
+                if (anchorValue.isNotEmpty()) {
+                    val qty = c.slots["quantity"]?.takeIf { it.isNotBlank() } ?: "1"
+                    hint += " If \"$anchorValue\" is already in the cart with at least $qty (its card shows − $qty + instead of ADD), reply done pointing at that quantity; don't add another."
+                }
                 val r = llmAct(stepText(st, c) + demoHint(st) + hint, c, snap) ?: continue
                 if (r.first.method == "ask") start += System.currentTimeMillis() - t // waiting for the user doesn't count
                 if (r.second && r.first.method == "llm" && r.first.ok) { verifying = true; checks++; continue }
@@ -373,6 +489,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         }
         val key = d.action + (d.node?.let { n -> " \"" + Brain.display(snap, n, 40).ifEmpty { n.shortId.ifEmpty { "element at y=${n.bounds.centerY() * 100 / snap.screenH}%" } } + "\"" } ?: "")
         Dbg.log("LLM_DECIDE $key completes=${d.completesStep} :: ${d.reason}")
+        // The same tap over and over (on a screen that keeps changing on its own) is a loop too.
+        val tries = c.tapCounts.merge(key, 1, Int::plus) ?: 1
+        if (d.action != "done" && d.action != "ask" && tries > 3) dead.add(key)
         if (key in dead && d.action != "done" && d.action != "ask") {
             // The model keeps picking something that already did nothing here; don't let it spin.
             c.history.add("refused to repeat $key (it did nothing on this screen)")
@@ -491,6 +610,7 @@ class Executor(private val svc: TvaAccessibilityService) {
     /** Makes a goal the demo never showed true (e.g. quantity 2, deliver to Work), LLM-driven. */
     private suspend fun runGoal(goal: String, c: Ctx): StepResult {
         if (!Fireworks.available) return StepResult(false, "failed", "goal", "I can't adjust that without the language model")
+        c.tapCounts.clear()
         repeat(10) {
             svc.settle(400, 3000)
             val snap = svc.snapshot()
@@ -551,14 +671,65 @@ class Executor(private val svc: TvaAccessibilityService) {
         if (!Actions.setText(field, value)) return false
         svc.settle(700, 3000)
         c.history.add("searched this page for \"$value\"")
+        // The keyboard stays up over the results: the first tap on a result only closes it, and the
+        // item's ADD may sit under it. Back hides just the keyboard (the search stays open).
+        if (svc.snapshot().imeTop() > 0) {
+            svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            svc.settle(400, 2000)
+            val kept = svc.snapshot().appNodes(c.app).any { it.editable && Text.norm(it.label) == Text.norm(value) }
+            Dbg.log("PAGE_SEARCH keyboard hidden; query ${if (kept) "kept" else "lost"}")
+            if (!kept) return false
+        }
         return true
     }
 
-    /** Nothing in the middle of the screen yet: the page is still loading. */
+    /** A step that only closes a pop-up (its button is "Got it", "Not now", "✕"...), not part of the task. */
+    private fun isDismissal(st: JSONObject): Boolean {
+        if (st.optString("anchorSlot").isNotEmpty() || st.optString("textSlot").isNotEmpty()) return false
+        val t = st.optJSONObject("target") ?: return false
+        val label = Text.norm(t.optString("leafLabel").ifEmpty { t.optString("label") })
+        return label in DISMISS || Regex("\\b(dismiss|close)\\b.*\\b(pop.?up|dialog|banner|sheet|tooltip)\\b", RegexOption.IGNORE_CASE)
+            .containsMatchIn(st.optString("intent"))
+    }
+
+    /**
+     * How many of [item] the screen says are in the cart: a small number inside a − / + stepper in
+     * the item's card (the card is found the same way as for anchors). Null if no such stepper.
+     */
+    private fun quantityShown(s: Snapshot, item: String, app: String): Int? {
+        for (n in s.appNodes(app)) {
+            val q = n.label.trim().toIntOrNull() ?: continue
+            if (q !in 1..20) continue
+            val p = s.parentOf(n) ?: continue
+            val buttons = p.children.map { s.nodes[it] }.count { it.visible && it.clickable && it.idx != n.idx }
+            if (buttons < 2) continue
+            // Walk out from the "− 1 +" stepper to its dish card: the nearest box that names the item,
+            // stopping once the box grows to hold another card (an ADD or a second stepper). The name
+            // must start the label, so "Double Cheese Margherita" doesn't count as "margherita".
+            val want = Text.norm(item)
+            var cur: UiNode? = p
+            var hops = 0
+            while (cur != null && hops < 8 && cur.bounds.height() < s.screenH * 0.5) {
+                val labels = s.labelsIn(cur, 40)
+                if (hops > 0 && labels.any { Text.norm(it) == "add" }) break
+                if (hops > 0 && s.subtree(cur).count { x -> x.idx != n.idx && x.label.trim().toIntOrNull() in 1..20 && (s.parentOf(x)?.children?.size ?: 0) >= 3 } > 0) break
+                if (labels.any { val l = Text.norm(it); l.isNotEmpty() && (l == want || l.startsWith("$want ") || want.startsWith("$l ")) }) return q
+                cur = s.parentOf(cur); hops++
+            }
+        }
+        return null
+    }
+
+    /**
+     * The page is still loading: nothing in the middle of the screen yet, or a loading screen with a
+     * single line of text (Zomato's "Your best idea might just be a tea break" over shimmer boxes).
+     */
     private fun blank(s: Snapshot, app: String): Boolean {
+        val nodes = s.appNodes(app)
+        if (nodes.isNotEmpty() && nodes.map { it.normLabel }.filter { it.isNotEmpty() }.distinct().size <= 2) return true
         val top = (s.screenH * 0.2).toInt()
         val bottom = (s.screenH * 0.85).toInt()
-        return s.appNodes(app).count {
+        return nodes.count {
             it.bounds.centerY() in top..bottom && it.bounds.height() < s.screenH / 2 && (it.label.isNotEmpty() || it.clickable)
         } < 3
     }
@@ -570,8 +741,10 @@ class Executor(private val svc: TvaAccessibilityService) {
     private fun same(a: Snapshot, b: Snapshot, app: String): Boolean {
         if (a.activity != b.activity) return false
         if (a.windows.count { it.pkg == app } != b.windows.count { it.pkg == app }) return false
-        fun labels(s: Snapshot) = s.appNodes(app).asSequence().filter { it.label.isNotEmpty() }
-            .map { it.normLabel + "@" + it.bounds.top / 16 }.take(80).toSet()
+        // Checked/selected state counts too: a toggle that flipped must not be tapped again.
+        fun labels(s: Snapshot) = s.appNodes(app).asSequence().filter { it.label.isNotEmpty() || it.checked || it.selected }
+            .map { it.normLabel + "@" + it.bounds.top / 16 + (if (it.checked) "#c" else "") + (if (it.selected) "#s" else "") }
+            .take(80).toSet()
         val la = labels(a); val lb = labels(b)
         if (la.isEmpty() && lb.isEmpty()) return true
         val jaccard = la.intersect(lb).size.toDouble() / la.union(lb).size
@@ -601,7 +774,17 @@ class Executor(private val svc: TvaAccessibilityService) {
      */
     private suspend fun scrollOnce(snap: Snapshot, app: String, forward: Boolean): Boolean {
         val x = snap.screenW * 0.5f
-        val (y1, y2) = if (forward) snap.screenH * 0.74f to snap.screenH * 0.26f else snap.screenH * 0.26f to snap.screenH * 0.74f
+        // With the keyboard up, a swipe across it glide-types a word into the search box ("by by by").
+        // Swipe only in the part of the list above it, or scroll the list without a gesture.
+        val ime = snap.imeTop()
+        val lo = if (ime > 0) ime - snap.screenH * 0.04f else snap.screenH * 0.74f
+        val hi = snap.screenH * 0.26f
+        if (lo - hi < snap.screenH * 0.15f) {
+            val ok = Resolver.mainScrollable(snap, app)?.let { Actions.scroll(it, forward) } ?: false
+            svc.settle(350, 2000)
+            return ok
+        }
+        val (y1, y2) = if (forward) lo to hi else hi to lo
         var ok = throughHud { Actions.swipe(svc, x, y1, x, y2, 380) }
         if (!ok) ok = Resolver.mainScrollable(snap, app)?.let { Actions.scroll(it, forward) } ?: false
         svc.settle(350, 2000)

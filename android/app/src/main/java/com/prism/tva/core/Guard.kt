@@ -60,6 +60,11 @@ object Guard {
         return null
     }
 
+    /** A pay/checkout button is on screen (e.g. Zomato's cart "Add Payment Method"): the next tap would pay. */
+    fun atPaymentStep(snap: Snapshot, pkg: String): Boolean =
+        screenBlock(snap, pkg) == "payment" ||
+            snap.appNodes(pkg).any { n -> n.label.isNotEmpty() && n.bounds.height() < snap.screenH / 4 && actionBlock(listOf(n.label)) != null }
+
     fun spoken(reason: String) = when (reason) {
         "payment" -> "the payment step"
         "password" -> "a password screen"
