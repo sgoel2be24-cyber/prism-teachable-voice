@@ -132,8 +132,14 @@ object Resolver {
                 val row = snap.rowLabels(a) + labels
                 if (anchorSlotValue.isNotEmpty()) {
                     val soft = step.optBoolean("anchorSoft")
-                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) }) { s += if (soft) 2.0 else 4.0; why.append("anchor ") }
-                    else s -= if (soft) 0.5 else 4.0
+                    if (row.any { Text.fuzzyContains(it, anchorSlotValue) }) {
+                        s += if (soft) 2.0 else 4.0; why.append("anchor ")
+                        // "Margherita Pizza" beats "Double Cheese Margherita Pizza" for "margherita".
+                        val v = Text.norm(anchorSlotValue)
+                        if (row.any { val l = Text.norm(it); l == v || l.startsWith("$v ") || v.startsWith("$l ") || Text.norm(it + "s") == v }) {
+                            s += 1.5; why.append("anchor= ")
+                        }
+                    } else s -= if (soft) 0.5 else 4.0
                 } else {
                     if (row.any { Text.fuzzyContains(it, anchorLiteral) }) { s += 2.0; why.append("anchorLit ") } else s -= 0.5
                 }

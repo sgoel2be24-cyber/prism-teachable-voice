@@ -21,6 +21,7 @@ object Guard {
         "upi id", "enter upi", "net banking", "netbanking", "select a payment method", "choose a payment method",
         "select payment method", "payment options", "cvv", "card number", "expiry date", "name on card",
         "wallets", "cash on delivery", "pay on delivery", "add new card", "saved cards",
+        "bill total", "pay by any upi app", "add credit or debit cards",
     )
 
     /** Hints or labels of text fields that ask for credentials. */
@@ -47,6 +48,8 @@ object Guard {
     fun screenBlock(snap: Snapshot, pkg: String): String? {
         val nodes = snap.appNodes(pkg)
         if (nodes.any { it.password }) return "password"
+        // The app's own name for the screen (e.g. Zomato's PaymentsOptionsActivityV5).
+        if (Regex("payment", RegexOption.IGNORE_CASE).containsMatchIn(snap.activity ?: "") && snap.appPkg == pkg) return "payment"
         val screenText = padded(nodes.joinToString(" ") { it.label })
         val payHits = PAY_SCREEN.count { screenText.contains(" $it ") }
         if (payHits >= 2) return "payment"

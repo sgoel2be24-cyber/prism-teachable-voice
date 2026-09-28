@@ -120,21 +120,51 @@ class Snapshot(
     }
 
     /**
-     * The row/card around [n]: the nearest ancestor (under half the screen tall) holding labels other
-     * than [n]'s own, e.g. the dish card around an ADD button. Its labels are what make "the ADD next
-     * to Margherita" distinguishable from every other ADD.
+     * The row/card around [n], e.g. the dish card around an ADD button. Its labels are what make "the
+     * ADD next to Margherita" distinguishable from every other ADD.
+     *
+     * When the screen has other elements just like [n] (other ADD buttons), the card is the LARGEST
+     * ancestor that holds no other one: Zomato wraps ADD with a "customisable" note in a small box,
+     * and the dish name sits two levels up. Without look-alikes it's the nearest ancestor with any
+     * other label. Either way it stays under half the screen tall.
      */
     fun rowContainer(n: UiNode): UiNode? {
         val own = labelsIn(n, 12).map { Text.norm(it) }.toSet()
+        val others = twins(n).filter { it.idx != n.idx }
         var cur = parentOf(n)
         var hops = 0
-        while (cur != null && hops < 10) {
-            if (cur.bounds.height() > screenH * 0.5) return null
-            if (labelsIn(cur, 24).any { val k = Text.norm(it); k.isNotEmpty() && k !in own }) return cur
+        var found: UiNode? = null
+        while (cur != null && hops < 14) {
+            if (cur.bounds.height() > screenH * 0.5) break
+            val c = cur
+            if (others.any { isInside(it, c) }) break
+            if (labelsIn(c, 24).any { val k = Text.norm(it); k.isNotEmpty() && k !in own }) {
+                if (others.isEmpty()) return c
+                found = c
+            }
+            cur = parentOf(c)
+            hops++
+        }
+        return found
+    }
+
+    /** Elements that look like [n] (same id, class and label, ignoring numbers), top to bottom. */
+    fun twins(n: UiNode): List<UiNode> {
+        val key = Text.stable(n.label.ifEmpty { labelsIn(n, 1).firstOrNull() ?: "" })
+        return appNodes(windows[n.window].pkg)
+            .filter { it.shortId == n.shortId && it.shortCls == n.shortCls && Text.stable(it.label.ifEmpty { labelsIn(it, 1).firstOrNull() ?: "" }) == key }
+            .sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+    }
+
+    private fun isInside(n: UiNode, ancestor: UiNode): Boolean {
+        var cur = parentOf(n)
+        var hops = 0
+        while (cur != null && hops < 40) {
+            if (cur.idx == ancestor.idx) return true
             cur = parentOf(cur)
             hops++
         }
-        return null
+        return false
     }
 
     fun rowLabels(n: UiNode, limit: Int = 14): List<String> {
@@ -201,10 +231,7 @@ class Snapshot(
         val t = hit.target
         val own = labelsIn(t, 8)
         val leafLabel = hit.leaf.label.ifEmpty { own.firstOrNull() ?: "" }
-        val key = Text.stable(t.label.ifEmpty { own.firstOrNull() ?: "" })
-        val twins = appNodes(windows[t.window].pkg)
-            .filter { it.shortId == t.shortId && it.shortCls == t.shortCls && Text.stable(it.label.ifEmpty { labelsIn(it, 1).firstOrNull() ?: "" }) == key }
-            .sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+        val twins = twins(t)
         return JSONObject()
             .put("id", t.shortId).put("cls", t.shortCls)
             .put("label", t.label).put("leafLabel", leafLabel)
@@ -285,6 +312,35 @@ class Snapshot(
                 }
             }
             return Snapshot(nodes, wrecs, sw, sh, activity, System.currentTimeMillis())
+        }
+
+        /**
+         * Rebuilds a snapshot saved by [toJson] (a teach recording keeps one per tap), so a recording
+         * can be re-described and re-learned with improved rules without teaching it again.
+         */
+        fun fromJson(j: JSONObject): Snapshot {
+            fun rect(s: String) = s.split(',').map { it.trim().toInt() }.let { Rect(it[0], it[1], it[2], it[3]) }
+            val ws = j.optJSONArray("windows") ?: JSONArray()
+            val wrecs = (0 until ws.length()).map { k ->
+                val w = ws.getJSONObject(k)
+                WindowRec(k, w.optInt("type"), w.optInt("layer"), w.optString("pkg"), w.optString("title"),
+                    rect(w.getString("b")), w.optBoolean("active"))
+            }
+            val arr = j.getJSONArray("nodes")
+            val index = HashMap<Int, Int>()
+            for (k in 0 until arr.length()) index[arr.getJSONObject(k).getInt("i")] = k
+            val nodes = ArrayList<UiNode>(arr.length())
+            for (k in 0 until arr.length()) {
+                val o = arr.getJSONObject(k)
+                val f = o.optString("flags")
+                val p = index[o.optInt("p", -1)] ?: -1
+                nodes.add(UiNode(k, p, if (p >= 0) nodes[p].depth + 1 else 0, o.optInt("w"),
+                    o.optString("id").ifEmpty { null }, o.optString("cls"), o.optString("label"), null,
+                    o.optString("hint").ifEmpty { null }, rect(o.getString("b")),
+                    'C' in f, 'L' in f, 'E' in f, 'S' in f, 'K' in f, 'X' in f, 'F' in f, 'P' in f, 'h' !in f, null))
+                if (p >= 0) nodes[p].children.add(k)
+            }
+            return Snapshot(nodes, wrecs, j.optInt("w"), j.optInt("h"), j.optString("activity").ifEmpty { null }, 0)
         }
     }
 }

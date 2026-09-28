@@ -45,12 +45,18 @@ object Generaliser {
         val noise = JSONArray()
         var seenApp = false
         var lastPkg = ""
+        var scrolls = 0 // scrolling since the last kept step: how far down the demo had to look
         for (s in raw) {
             val pkg = s.optString("pkg")
             when (s.optString("kind")) {
                 "tap", "longpress", "type" -> {
                     when {
-                        pkg == app -> { seenApp = true; kept.add(s) }
+                        pkg == app -> {
+                            seenApp = true
+                            if (scrolls > 0) s.put("scrollsBefore", scrolls)
+                            scrolls = 0
+                            kept.add(s)
+                        }
                         pkg == homePkg && !seenApp -> Unit // the launcher tap that opened the app
                         else -> noise.put(JSONObject().put("reason", "outside ${appLabel.ifEmpty { "the app" }}: $pkg")
                             .put("label", s.optJSONObject("target")?.optString("leafLabel") ?: ""))
@@ -60,7 +66,8 @@ object Generaliser {
                 // A back used to leave another app (a notification, a quick reply) is part of the detour.
                 "back" -> if (seenApp && lastPkg == app) kept.add(JSONObject().put("kind", "back"))
                     else if (seenApp) { noise.put(JSONObject().put("reason", "back out of $lastPkg")); lastPkg = app }
-                else -> Unit // scrolls are re-done automatically while searching; home ends the flow
+                "scroll" -> if (seenApp && (pkg.isEmpty() || pkg == app)) scrolls++
+                else -> Unit // home ends the flow
             }
         }
         while (kept.isNotEmpty() && kept.last().optString("kind") == "back") kept.removeAt(kept.size - 1)
@@ -107,8 +114,9 @@ object Generaliser {
                     val own = listOf(t.optString("leafLabel"), t.optString("label")) + t.optJSONArray("ownLabels").strings()
                     val row = t.optJSONArray("rowLabels").strings()
                     val existing = slots.firstOrNull { sl -> own.any { Text.fuzzyContains(it, sl.span.text) } }
+                    // Longest command phrase the element shows: "margherita pizza", not just "pizza".
                     val fresh = existing ?: spans.filter { !overlapsSlot(it) && it.text.length >= 3 }
-                        .sortedBy { it.end - it.start }
+                        .sortedByDescending { it.end - it.start }
                         .firstOrNull { sp -> own.any { Text.fuzzyContains(it, sp.text) } }
                         ?.let { slotFor(it, "choice") }
                     if (fresh != null) {
@@ -116,7 +124,7 @@ object Generaliser {
                     } else {
                         val anchorSlot = slots.firstOrNull { sl -> row.any { Text.fuzzyContains(it, sl.span.text) } }
                             ?: spans.filter { !overlapsSlot(it) && it.text.length >= 3 }
-                                .sortedBy { it.end - it.start }
+                                .sortedByDescending { it.end - it.start }
                                 .firstOrNull { sp -> row.any { Text.fuzzyContains(it, sp.text) } }
                                 ?.let { slotFor(it, "item") }
                         if (anchorSlot != null) {
@@ -235,7 +243,11 @@ object Matcher {
                 if (m != null) { names.add(m.groupValues[1]); "(.+?)" } else Regex.escape(tok)
             }
             val hit = Regex("^$pattern$").find(u) ?: continue
-            return Match(r, names.mapIndexed { i, n -> n to hit.groupValues[i + 1] }.toMap(), "template")
+            val values = names.mapIndexed { i, n -> n to hit.groupValues[i + 1] }.toMap()
+            // A value that swallowed an extra request ("dominos and deliver it to work", "2 of them
+            // please") means the command says more than the template: let the language model read it.
+            if (values.values.any { v -> v.split(' ').size > 4 || Regex("\\b(and|with|to|for|then|deliver|please)\\b").containsMatchIn(v) }) continue
+            return Match(r, values, "template")
         }
         return null
     }

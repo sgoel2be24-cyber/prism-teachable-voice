@@ -28,6 +28,7 @@ object Brain {
 Rules:
 - Paraphrases and changed values map to the same flow ("get me a farmhouse from dominos" -> the pizza flow with item=farmhouse).
 - Fill "slots" only with values the user actually said. Write numbers as digits ("two" -> "2"). Keep names as the user said them.
+- If the user asks for something the flow has no slot for (a quantity, a delivery address like "to Work", a size), still put it in "slots" under a short lowercase name ("quantity", "address", "size").
 - "missing": required slots of the chosen flow that the user did not give and that cannot be inferred.
 - If the user names a different app than the flow's app but the same kind of task, still choose the flow and put that app's name in "app".
 - "status_query": true when the user asks about a previous run ("did it work?", "did the last run succeed?").
@@ -78,6 +79,7 @@ Rules:
 - If the goal's element is not on screen, scroll (scroll_down / scroll_up) or go back if you are on the wrong page.
 - "Already done this run" says what each of your earlier actions did. Never repeat an action that changed nothing; try something else. A full-screen photo viewer or image gallery is a dead end: go back.
 - If the goal is already satisfied on this screen (for example the item is already in the cart with the right quantity), reply "done" and set "element" to the element that proves it (the item's name in the cart list, an "Added to bag" or "item in your bag" message, the add button of this product now reading "Go to bag" / "Go to cart", a filled field). "Add" buttons on other, similar products further down do not mean this one still needs adding. Being on a cart or bag page is not proof by itself: the item from this run must be listed. If nothing on screen proves it, do not reply done.
+- Buttons that repeat on every item show which item they belong to ("ADD" for "Margherita Pizza"). Pick the item whose name matches the user's value most exactly ("Margherita Pizza", not "Double Cheese Margherita Pizza" or a combo/meal deal), and never add a different item.
 - The task was demonstrated once, possibly in a different app or on an older screen. Look for the equivalent element even if it is worded differently ("Add to bag" = "Add to cart", "Bag" = "Cart"). If the goal needs an intermediate screen (open the product page to find the add button, open a sheet), take that step yourself.
 - Never tap anything that pays, places an order, or submits a login, password, OTP or PIN. Reply "ask" instead.
 - Never choose a size, colour, variant or any other personal option yourself unless the user's values say which one, or there is only one option. Reply "ask" with ONE short question instead, e.g. "Which size?". If the user's choice is not available (greyed out, sold out), ask again naming what is available if you can tell. Options in a horizontal-list may continue off screen: scroll_right on that list (element = the list) before deciding a choice is missing.
@@ -97,7 +99,8 @@ Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"scroll_
             if (elements.isEmpty()) append("(No elements from the app are on screen: it may still be loading.)\n")
             append('\n').append(screen)
         }
-        val j = Fireworks.json(ACT_SYS, user, "act") ?: return null
+        // A slow reply (the API occasionally takes 15-25 s) is dropped and the caller simply asks again.
+        val j = Fireworks.json(ACT_SYS, user, "act", timeoutMs = 12000) ?: return null
         val action = j.optString("action")
         val idx = j.optInt("element", -1)
         val node = elements.getOrNull(idx - 1)
@@ -150,8 +153,17 @@ Reply with JSON only: {"action": "tap"|"type"|"scroll_down"|"scroll_up"|"scroll_
         val main = wins.minByOrNull { snap.windows[it].layer }
         sb.append("Screen: ").append(snap.activity?.substringAfterLast('.') ?: "").append('\n')
         if (wins.size > 1) sb.append("(An extra window such as a dialog or sheet is open; its elements are listed first.)\n")
+        // Repeated short buttons ("ADD" on every dish, "Add to cart" on every product) are useless to
+        // the model without the item they belong to, so name their card.
+        val repeats = sorted.filter { it.clickable && display(snap, it, 30).length in 1..14 }
+            .groupingBy { it.shortId + "|" + it.shortCls + "|" + Text.stable(display(snap, it, 30)) }.eachCount()
         sorted.forEachIndexed { i, n ->
-            val label = display(snap, n)
+            var label = display(snap, n)
+            if (n.clickable && label.length in 1..14 &&
+                (repeats[n.shortId + "|" + n.shortCls + "|" + Text.stable(label)] ?: 0) > 1) {
+                snap.rowLabels(n, 6).firstOrNull { l -> l.count { it.isLetter() } >= 3 && !idLike(l) }
+                    ?.let { label = "$label\" for \"${it.take(50)}" }
+            }
             val role = when {
                 n.editable -> "field"
                 n.scrollable && !n.clickable ->
@@ -187,7 +199,8 @@ Return JSON only:
  "goals": [{"slot": "quantity"|"address"|..., "default": "value used in the demo or ''", "before_step": step_index or -1 for after the last step, "instruction": "how to make it true, with {slot}"}]
 }
 Guidance:
-- A step is noise only if it clearly was not needed (a mis-tap that was immediately undone, an unrelated screen).
+- Mark a step noise ONLY if the task works without it: a mis-tap that was immediately undone, a tap on something unrelated to the command (e.g. opening another dish's photo after the requested item was added), or dismissing a pop-up (pop-ups are handled automatically at run time).
+- Never mark as noise a step that moves the task forward: one that opens the next screen the demo continues on (compare "screen" with "next_step_screen"), opens a sheet or options for the requested item, or confirms it. Two taps that look alike (a search suggestion, then the restaurant in the results) are usually both needed. Opening the cart or bag at the end to show the result is part of the task.
 - Add a "quantity" goal when the task adds an item to a cart (default "1"); place it before the step that confirms adding the item (e.g. "Add item"), or -1 if there is none.
 - Add an "address" goal for food delivery (default ""); place it at -1 (in the cart, make sure the delivery address is {address}).
 - Do not invent other goals."""
@@ -200,14 +213,24 @@ Guidance:
         for (i in 0 until steps.length()) {
             val s = steps.getJSONObject(i)
             val t = s.optJSONObject("target")
+            val next = if (i + 1 < steps.length()) steps.getJSONObject(i + 1) else null
             lines.put(JSONObject().put("i", i).put("kind", s.optString("kind")).put("step", Generaliser.describe(s, ex))
                 .put("slot", s.optString("textSlot").ifEmpty { s.optString("anchorSlot") })
                 .put("element_id", t?.optString("id") ?: "")
-                .put("card_text", t?.optJSONArray("rowLabels")?.let { a -> (0 until minOf(4, a.length())).map { a.getString(it) } } ?: emptyList<String>()))
+                .put("card_text", t?.optJSONArray("rowLabels")?.let { a -> (0 until minOf(4, a.length())).map { a.getString(it) } } ?: emptyList<String>())
+                .put("screen", s.optString("activity").substringAfterLast('.'))
+                .put("next_step_screen", next?.optString("activity")?.substringAfterLast('.') ?: "(end)"))
         }
         val user = JSONObject().put("command", recipe.optString("command")).put("app", recipe.optString("appLabel"))
             .put("slots", JSONObject(ex as Map<*, *>)).put("steps", lines).toString()
         return Fireworks.json(REFINE_SYS, user, "refine", effort = "medium", maxTokens = 1500, timeoutMs = 30000)
+    }
+
+    /** The model writes intents with either the old or the new slot names; make them all the new ones. */
+    private fun renamed(text: String, rename: Map<String, String>): String {
+        var x = text
+        rename.forEach { (a, b) -> x = x.replace("{$a}", "{$b}") }
+        return x
     }
 
     /** Applies a [refine] result onto a heuristic recipe (renames slots everywhere, adds intents and goals). */
@@ -221,9 +244,12 @@ Guidance:
         val newSlots = JSONArray()
         for (i in 0 until slots.length()) {
             val s = slots.getJSONObject(i)
-            val name = rn(s.getString("name"))
+            val old = s.getString("name")
+            val name = rn(old)
+            // The model may key meanings/questions by either name.
+            fun pick(o: JSONObject?) = o?.optString(name).orEmpty().ifEmpty { o?.optString(old).orEmpty() }
             newSlots.put(JSONObject().put("name", name).put("example", s.optString("example")).put("required", true)
-                .put("meaning", meanings?.optString(name).orEmpty()).put("question", questions?.optString(name).orEmpty()))
+                .put("meaning", pick(meanings)).put("question", pick(questions)))
         }
         var template = recipe.optString("template")
         rename.forEach { (a, b) -> template = template.replace("{$a}", "{$b}") }
@@ -239,8 +265,17 @@ Guidance:
                 val i = o.optInt("i", -1)
                 if (i !in 0 until steps.length()) continue
                 val s = steps.getJSONObject(i)
-                o.optString("intent").takeIf { it.isNotBlank() }?.let { s.put("intent", it) }
-                if (o.optBoolean("noise") && s.optString("kind") != "launch") s.put("noise", true)
+                o.optString("intent").takeIf { it.isNotBlank() }?.let { s.put("intent", renamed(it, rename)) }
+                if (o.optBoolean("noise") && s.optString("kind") != "launch") {
+                    // Guard rails on the model: a step carrying the user's value, or one that led to
+                    // the app screen the demo continued on, is part of the task.
+                    val carriesValue = s.optString("textSlot").isNotEmpty() || s.optString("anchorSlot").isNotEmpty()
+                    val nextAct = if (i + 1 < steps.length()) steps.getJSONObject(i + 1).optString("activity") else ""
+                    val navigated = nextAct.isNotEmpty() && s.optString("activity").isNotEmpty() &&
+                        nextAct != s.optString("activity") && !nextAct.startsWith("android.")
+                    if (carriesValue || navigated) com.prism.tva.core.Dbg.log("REFINE noise refused for step $i (value=$carriesValue navigated=$navigated)")
+                    else s.put("noise", true)
+                }
             }
         }
         val goals = JSONArray()
@@ -250,7 +285,7 @@ Guidance:
                 val slot = g.optString("slot").trim()
                 if (!slot.matches(Regex("[a-z][a-z0-9_]{0,20}"))) continue
                 goals.put(JSONObject().put("slot", slot).put("default", g.optString("default"))
-                    .put("before", g.optInt("before_step", -1)).put("instruction", g.optString("instruction")))
+                    .put("before", g.optInt("before_step", -1)).put("instruction", renamed(g.optString("instruction"), rename)))
                 if ((0 until newSlots.length()).none { newSlots.getJSONObject(it).getString("name") == slot }) {
                     newSlots.put(JSONObject().put("name", slot).put("example", g.optString("default"))
                         .put("required", false).put("meaning", meanings?.optString(slot).orEmpty()))

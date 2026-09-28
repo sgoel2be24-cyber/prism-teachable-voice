@@ -44,6 +44,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         var asks: Int = 0,
         val cross: Boolean = false, // running a recipe in a different app than it was taught in
         val deadEnds: HashMap<Int, MutableSet<String>> = HashMap(), // screen signature -> actions that did nothing there
+        val llmTapped: MutableList<String> = ArrayList(), // what the LLM tapped while working on the current step
     )
 
     @Volatile private var job: Job? = null
@@ -91,7 +92,30 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (appOverride == null) base
             else "$base — taught in ${recipe.optString("appLabel")}, now doing the same in ${Actions.appLabel(svc, app)} (its buttons and screens differ)",
             cross = appOverride != null)
-        val goals = recipe.optJSONArray("goals") ?: JSONArray()
+        val goals = JSONArray((recipe.optJSONArray("goals") ?: JSONArray()).toString())
+        // Values the user gave that no step or goal uses ("…and deliver to Work" when the demo never
+        // touched the address): make them true at the end, before handing over for payment.
+        run {
+            val used = HashSet<String>()
+            for (i in 0 until steps.length()) steps.getJSONObject(i).let { used += it.optString("textSlot"); used += it.optString("anchorSlot") }
+            for (i in 0 until goals.length()) used += goals.getJSONObject(i).optString("slot")
+            val taught = HashMap<String, String>()
+            recipe.optJSONArray("slots")?.let { a -> for (i in 0 until a.length()) a.getJSONObject(i).let { taught[it.getString("name")] = it.optString("example") } }
+            val usedValues = slots.filterKeys { it in used }.values.map { Text.norm(it) }.toSet()
+            slots.filter { (k, v) -> k !in used && v.isNotBlank() && Text.norm(v) != Text.norm(taught[k].orEmpty()) &&
+                Text.norm(v) !in usedValues && k.matches(Regex("[a-z][a-z0-9_]{0,20}")) }
+                .forEach { (k, _) ->
+                    Dbg.log("EXTRA_GOAL $k=${slots[k]}")
+                    val place = Regex("address|location|deliver").containsMatchIn(k)
+                    goals.put(JSONObject().put("slot", k).put("default", "")
+                        // Delivery apps pick the address on the home screen, before the restaurant
+                        // list (which depends on it): do it right after opening the app.
+                        .put("before", if (place && steps.length() > 1) 1 else -1)
+                        .put("instruction", if (place)
+                            "Set the delivery address to the saved address named \"{$k}\": tap the current delivery location (usually at the top of the home screen), then pick \"{$k}\" from the saved addresses. Don't edit or add an address."
+                        else "Make sure the ${k.replace('_', ' ')} is {$k} (open the cart or checkout if that's where it is set; do not pay)"))
+                }
+        }
         val runId = "run_" + System.currentTimeMillis()
         val log = JSONArray()
         var outcome = "success"
@@ -241,9 +265,12 @@ class Executor(private val svc: TvaAccessibilityService) {
     }
 
     private suspend fun tap(st: JSONObject, c: Ctx): StepResult {
+        val prevTapped = c.llmTapped.toSet()
+        c.llmTapped.clear()
         var start = System.currentTimeMillis()
         var scrolls = 0
         var preScrolls = 0
+        var pageSearched = false
         var llmActs = 0
         var method = "match"
         var checks = 0 // times we re-checked an LLM "this finishes the step" claim on the resulting screen
@@ -280,33 +307,49 @@ class Executor(private val svc: TvaAccessibilityService) {
                     "score=%.1f next=%.1f %s".format(m.score, m.runnerUp, m.why))
             }
             val elapsed = System.currentTimeMillis() - start
+            // The LLM already pressed this very button while finishing the previous step (e.g. it
+            // tapped "Add item" itself): don't look for it again.
+            val want = Text.stable(st.optJSONObject("target")?.let { it.optString("leafLabel").ifEmpty { it.optString("label") } }.orEmpty())
+            if (llmActs == 0 && want.length >= 3 && want in prevTapped) {
+                return StepResult(true, "success", "skip", "already done while finishing the previous step")
+            }
             if (elapsed < 2500) { delay(400); continue } // let a loading screen finish first
             // Web-based result pages can sit blank (only the top bar and tab bar) for several seconds
             // on a slow connection; scrolling or asking the LLM about an empty page goes nowhere.
             if (elapsed < 15000 && blank(snap, c.app)) { delay(500); continue }
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to three thumb scrolls with the fast matcher, then the LLM.
-            if (preScrolls < 3 && !c.cross) {
+            if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 3) && !c.cross) {
                 val s0 = sig(snap, c.app)
                 scrollOnce(snap, c.app, forward = true)
                 preScrolls++
                 if (sig(svc.snapshot(), c.app) == s0) preScrolls = 3 else scrolls++ // screen doesn't scroll
                 continue
             }
+            // An item far down a long menu: use the page's own "Search in …" box once, then match again.
+            val anchorValue = c.slots[st.optString("anchorSlot")].orEmpty()
+            if (st.optInt("scrollsBefore") >= 8 && !pageSearched && anchorValue.isNotEmpty() && !c.cross) {
+                pageSearched = true
+                if (searchInPage(snap, anchorValue, c)) continue
+            }
             // Fast path found nothing clear: let the LLM look at the screen. A stuck step is reported
             // within 30 s rather than guessing on (e.g. an app switched to another language).
-            // In another app every screen is new, so the LLM gets a bigger budget there.
-            if (Fireworks.available && llmActs < (if (c.cross) 12 else 8) && elapsed < (if (c.cross) 45000 else 26000)) {
+            // In another app every screen is new, and an item far down a long list (the demo scrolled a
+            // lot) may need the page's own search: both get a bigger budget.
+            val far = st.optInt("scrollsBefore") >= 8
+            val big = c.cross || far
+            if (Fireworks.available && llmActs < (if (big) 12 else 8) && elapsed < (if (big) 45000 else 26000)) {
                 llmActs++
                 method = "llm"
                 val t = System.currentTimeMillis()
-                val r = llmAct(stepText(st, c) + demoHint(st), c, snap) ?: continue
+                val hint = if (far) " In the demonstration the user scrolled a long way down to find it; if this screen has its own search box (e.g. \"Search in …\"), search for it there instead of scrolling." else ""
+                val r = llmAct(stepText(st, c) + demoHint(st) + hint, c, snap) ?: continue
                 if (r.first.method == "ask") start += System.currentTimeMillis() - t // waiting for the user doesn't count
                 if (r.second && r.first.method == "llm" && r.first.ok) { verifying = true; checks++; continue }
                 if (r.second) return r.first // done, handed over, asked, or failed
                 continue
             }
-            if (elapsed > (if (llmActs > 0) (if (c.cross) 50000 else 30000) else 15000) || scrolls >= 12) {
+            if (elapsed > (if (llmActs > 0) (if (big) 50000 else 30000) else 15000) || scrolls >= 12) {
                 return StepResult(false, "failed", "notfound", "I couldn't find ${Generaliser.describe(st, c.slots).removePrefix("Tap ")} on this screen")
             }
             if (scrollOnce(snap, c.app, forward = scrolls < 6)) scrolls++ else delay(400)
@@ -337,7 +380,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         // headline of a newly opened screen (e.g. the product it opened).
         fun effect(): String {
             val after = svc.snapshot()
-            if (sig(after, c.app) == before) { dead.add(key); return "nothing changed" }
+            if (same(snap, after, c.app)) { dead.add(key); return "nothing changed" }
             val head = after.visibleLabels(c.app, 40).filter { !Brain.idLike(it) && it.trim().split(' ').size >= 3 }.take(2)
             // Buttons that stayed put but changed wording are the clearest sign an action took
             // effect ("Add to Bag" -> "Go to Bag").
@@ -357,9 +400,17 @@ class Executor(private val svc: TvaAccessibilityService) {
             "tap" -> {
                 val n = d.node ?: return null
                 guardTap(snap, n)?.let { return it to true }
-                val ok = press(n)
+                // Tap like a finger where the model pointed: some apps accept an accessibility click
+                // and ignore it (Zomato's location bar). Off-screen or under the keyboard: click.
+                val cx = n.bounds.exactCenterX()
+                val cy = n.bounds.exactCenterY()
+                val reachable = n.bounds.width() > 0 && cx in 0f..snap.screenW.toFloat() && cy in 0f..snap.screenH.toFloat() &&
+                    (snap.imeTop() < 0 || cy < snap.imeTop())
+                var ok = reachable && throughHud { Actions.tap(svc, cx, cy, false) }
+                if (!ok) ok = press(n)
                 svc.settle(400, 3000)
                 val what = Brain.display(snap, n, 50)
+                if (ok) c.llmTapped.add(Text.stable(what))
                 c.history.add("tapped ${if (what.isNotEmpty()) "\"$what\"" else "an unlabelled element"} to ${d.reason.take(60)} → ${effect()}")
                 return if (d.completesStep) StepResult(ok, if (ok) "success" else "failed", "llm", d.reason) to true
                 else StepResult(true, "success", "llm", d.reason) to false
@@ -401,7 +452,8 @@ class Executor(private val svc: TvaAccessibilityService) {
                 return StepResult(true, "success", "llm", d.reason) to false
             }
             "done" -> {
-                val proof = d.node?.let { Brain.display(snap, it, 60) }
+                // Text in a search box is what we typed, not evidence that anything happened.
+                val proof = d.node?.takeIf { !it.editable }?.let { Brain.display(snap, it, 60) }
                 Dbg.log("LLM done proof=${proof ?: "none"}")
                 if (strict && proof.isNullOrEmpty()) {
                     // A "done" we are double-checking needs something on screen that shows it.
@@ -437,11 +489,15 @@ class Executor(private val svc: TvaAccessibilityService) {
     /** Makes a goal the demo never showed true (e.g. quantity 2, deliver to Work), LLM-driven. */
     private suspend fun runGoal(goal: String, c: Ctx): StepResult {
         if (!Fireworks.available) return StepResult(false, "failed", "goal", "I can't adjust that without the language model")
-        repeat(7) {
-            svc.settle(400, 4000)
+        repeat(10) {
+            svc.settle(400, 3000)
             val snap = svc.snapshot()
             guardScreen(snap, c.app)?.let { return it }
-            val r = llmAct("$goal. Reply done as soon as this is true on screen.", c, snap) ?: return@repeat
+            val r = llmAct("$goal. Reply done, pointing at the element that shows it, only once this is true on screen.",
+                c, snap, strict = true) ?: return@repeat
+            // A tap the model thinks finishes the goal (e.g. opening the address list) is checked on
+            // the next screen rather than trusted.
+            if (r.second && r.first.method == "llm" && r.first.ok) return@repeat
             if (r.second) return StepResult(r.first.ok, r.first.outcome, "goal", r.first.note)
         }
         return StepResult(false, "failed", "goal", "I couldn't complete: $goal")
@@ -471,6 +527,31 @@ class Executor(private val svc: TvaAccessibilityService) {
         }
     }
 
+    /**
+     * Types [value] into the page's search box. On a restaurant page that is the menu search
+     * ("Search in Domino's Pizza"), reached from the search bar at the top. Returns false when the
+     * page has no search box.
+     */
+    private suspend fun searchInPage(snap: Snapshot, value: String, c: Ctx): Boolean {
+        val inPage = Regex("^search (in|within) ", RegexOption.IGNORE_CASE)
+        val notText = Regex("voice|scan|camera|mic|filter", RegexOption.IGNORE_CASE)
+        val boxes = snap.appNodes(c.app).filter { n ->
+            val words = Brain.display(snap, n, 80) + " " + Text.clean(n.hint) + " " + n.shortId
+            (n.clickable || n.editable) && words.contains("search", ignoreCase = true) && !notText.containsMatchIn(words)
+        }
+        val box = boxes.firstOrNull { inPage.containsMatchIn(Brain.display(snap, it, 80).ifEmpty { Text.clean(it.hint) }) }
+            ?: boxes.minByOrNull { it.bounds.top } ?: return false
+        Dbg.log("PAGE_SEARCH \"$value\" via \"${Brain.display(snap, box, 40)}\"")
+        if (!box.editable) { press(box); svc.settle(400, 3000) }
+        val s2 = svc.snapshot()
+        val field = s2.appNodes(c.app).firstOrNull { it.editable && it.focused }
+            ?: s2.appNodes(c.app).firstOrNull { it.editable } ?: return false
+        if (!Actions.setText(field, value)) return false
+        svc.settle(700, 3000)
+        c.history.add("searched this page for \"$value\"")
+        return true
+    }
+
     /** Nothing in the middle of the screen yet: the page is still loading. */
     private fun blank(s: Snapshot, app: String): Boolean {
         val top = (s.screenH * 0.2).toInt()
@@ -478,6 +559,31 @@ class Executor(private val svc: TvaAccessibilityService) {
         return s.appNodes(app).count {
             it.bounds.centerY() in top..bottom && it.bounds.height() < s.screenH / 2 && (it.label.isNotEmpty() || it.clickable)
         } < 3
+    }
+
+    /**
+     * Whether an action left the screen as it was. Rotating hints and ticking timers change a label
+     * or two on their own, so "same" means same screen, same windows and almost the same labels.
+     */
+    private fun same(a: Snapshot, b: Snapshot, app: String): Boolean {
+        if (a.activity != b.activity) return false
+        if (a.windows.count { it.pkg == app } != b.windows.count { it.pkg == app }) return false
+        fun labels(s: Snapshot) = s.appNodes(app).asSequence().filter { it.label.isNotEmpty() }
+            .map { it.normLabel + "@" + it.bounds.top / 16 }.take(80).toSet()
+        val la = labels(a); val lb = labels(b)
+        if (la.isEmpty() && lb.isEmpty()) return true
+        val jaccard = la.intersect(lb).size.toDouble() / la.union(lb).size
+        if (jaccard < 0.85) return false
+        // A button that changed its words in place ("Add to Bag" -> "Go to Bag") is a real change,
+        // unlike a search bar cycling through example queries.
+        val rotating = Regex("^search\\b", RegexOption.IGNORE_CASE)
+        val prev = a.appNodes(app).filter { it.clickable }.associateBy { it.bounds.flattenToString() }
+        return b.appNodes(app).filter { it.clickable }.none { n ->
+            val o = prev[n.bounds.flattenToString()] ?: return@none false
+            val was = Brain.display(a, o, 40)
+            val now = Brain.display(b, n, 40)
+            was != now && !rotating.containsMatchIn(was) && !rotating.containsMatchIn(now)
+        }
     }
 
     /** Cheap fingerprint of what's on screen (screen name + visible labels and their positions). */

@@ -76,7 +76,7 @@ class TvaAccessibilityService : AccessibilityService() {
         getSharedPreferences("tva", MODE_PRIVATE).getString("fw_key", null)?.takeIf { it.isNotBlank() }?.let { Fireworks.key = it }
         val filter = IntentFilter().apply {
             listOf("TEACH_START", "TEACH_STOP", "TEACH_CANCEL", "RUN", "RUN_RECIPE", "STOP", "LIST", "DUMP",
-                "DELETE", "EXPLAIN", "ANSWER", "MATCH", "GUARD").forEach { addAction(DEV + it) }
+                "DELETE", "EXPLAIN", "ANSWER", "MATCH", "GUARD", "REBUILD").forEach { addAction(DEV + it) }
         }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(devCommands, filter, Context.RECEIVER_EXPORTED)
         else registerReceiver(devCommands, filter)
@@ -314,6 +314,28 @@ class TvaAccessibilityService : AccessibilityService() {
                     Dbg.log("GUARD app=${s.appPkg} screen=${com.prism.tva.core.Guard.screenBlock(s, s.appPkg) ?: "clear"}")
                 }
                 "DELETE" -> store.deleteRecipe(intent.getStringExtra("id") ?: "")
+                // Re-learn a stored demonstration with the current rules (re-describes every tap from
+                // its saved screen snapshot), e.g. after improving how cards or slots are found.
+                "REBUILD" -> scope.launch(Dispatchers.Default) {
+                    val id = intent.getStringExtra("rec") ?: return@launch
+                    val rec = store.recording(id) ?: run { Dbg.log("REBUILD no recording $id"); return@launch }
+                    val steps = rec.getJSONArray("steps")
+                    val w = rec.optInt("screenW"); val h = rec.optInt("screenH")
+                    var n = 0
+                    for (i in 0 until steps.length()) {
+                        val st = steps.getJSONObject(i)
+                        val snapName = st.optString("snap")
+                        if (st.optString("kind") !in setOf("tap", "longpress") || snapName.isEmpty()) continue
+                        val f = File(store.snapDir(id), snapName)
+                        if (!f.exists()) continue
+                        val snap = runCatching { Snapshot.fromJson(JSONObject(f.readText())) }.getOrNull() ?: continue
+                        snap.hitTest((st.getDouble("x") * w).toInt(), (st.getDouble("y") * h).toInt())?.let {
+                            st.put("target", snap.describe(it)); n++
+                        }
+                    }
+                    Dbg.log("REBUILD $id re-described $n taps")
+                    onTeachFinished(rec)
+                }
                 "LIST" -> store.recipes().forEach { r ->
                     Dbg.log("RECIPE ${r.optString("id")} \"${r.optString("description")}\" \"${r.optString("template")}\" steps=${r.getJSONArray("steps").length()}")
                 }
