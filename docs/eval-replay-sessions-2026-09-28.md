@@ -98,3 +98,29 @@ The app confirmed: "Learned: Add wireless earbuds to cart on Amazon. 8 steps."
 | Search for a phone case on Amazon and add the first result to cart | T9 | added from the results page (cart 20 → 21), 46 s, 0 LLM calls |
 | Search for wireless earbuds on Amazon and add the first result to cart | T8 replay | results "Add to cart" → product page → its add button → stopped before checkout, 35 s, 0 LLM calls |
 | Order a Margherita pizza from Domino's on Zomato | regression | reached checkout, 40 s, 0 LLM calls |
+
+## Skipping sponsored results (28 Sep, 17:15–17:49 IST)
+
+"Add the first result" used to take Amazon's first "Add to cart", which is almost always a
+sponsored slot (Amazon's own links for these carry `sr_1_1_sspa`, `sr_1_2_sspa`). It now means the
+first result that isn't an advert:
+
+- In a generic list pick (repeated buttons, an "Add to cart", or a "first/top result" step) a
+  result whose card says "Sponsored", "Sponsored Ad", "Ad" or "Promoted", or links with `_sspa`,
+  is skipped. The card's "Sponsored" line is often already scrolled off the top, so hidden parts of
+  the card count too.
+- A container that only scores through an ad button (the page itself) is dropped as well; once it
+  was tapped in the middle and opened a sponsored product.
+- While only adverts are on screen, it keeps scrolling with the fast matcher (up to 10 screens)
+  instead of handing a page of ads to the model; the model has the same rule.
+- Named picks are left alone: Zomato marks Domino's itself as an ad in search results, and
+  "Domino's" is what the user asked for.
+- If the model ever taps an "Add to cart" that raises the cart count, the step ends there (it once
+  added three products in one run before noticing).
+
+| Command | Picked (Amazon's own position) | Result |
+|---|---|---|
+| wireless earbuds ×4 | `sr_1_3` Sony WF-C510 (first organic, after two ads) | 4/4, 48–57 s, 0 LLM calls in the last 3 |
+| phone case ×3 | `sr_1_3` Meyaar grip/case mount (first organic) | 3/3, 39–48 s, 0 LLM calls |
+| water bottle ×2 | `sr_1_4` Milton Torino 1000 (first organic, after three ads) | 2/2, 36–38 s |
+| Zomato judges' sentence ×2 (regression) | — | 2/2 to payment, 40–45 s, 0 LLM calls |

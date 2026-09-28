@@ -327,9 +327,12 @@ class TvaAccessibilityService : AccessibilityService() {
                     val ranked = Resolver.rank(st, Matcher.examples(r), snap, r.getString("app"))
                     Dbg.log("EXPLAIN ${Generaliser.describe(st, Matcher.examples(r))} candidates=${ranked.size}")
                     ranked.take(6).forEach { m ->
-                        Dbg.log("  %.2f %s [%s] '%s' %s :: %s".format(m.score, m.node.shortCls, m.node.shortId,
-                            (m.node.label.ifEmpty { snap.labelsIn(m.node, 1).firstOrNull() ?: "" }).take(50), m.node.bounds.toShortString(), m.why))
+                        Dbg.log("  %.2f %s [%s] '%s' %s :: %s%s".format(m.score, m.node.shortCls, m.node.shortId,
+                            (m.node.label.ifEmpty { snap.labelsIn(m.node, 1).firstOrNull() ?: "" }).take(50), m.node.bounds.toShortString(), m.why,
+                            if (Resolver.sponsored(snap, m.node)) " [SPONSORED: " + snap.rowContainer(m.node)?.bounds?.toShortString() + "]" else ""))
                     }
+                    val pick = Resolver.resolve(st, Matcher.examples(r), snap, r.getString("app"))
+                    Dbg.log("  pick: ${pick?.node?.bounds?.toShortString()} ${pick?.why}")
                 }
                 "GUARD" -> {
                     val s = snapshot()

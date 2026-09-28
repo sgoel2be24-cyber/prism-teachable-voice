@@ -22,8 +22,32 @@ object Resolver {
 
     class Match(val node: UiNode, val score: Double, val runnerUp: Double, val why: String)
 
-    fun resolve(step: JSONObject, slots: Map<String, String>, snap: Snapshot, pkg: String): Match? {
-        val ranked = rank(step, slots, snap, pkg)
+    fun resolve(step: JSONObject, slots: Map<String, String>, snap: Snapshot, pkg: String, skipAds: Boolean = true): Match? {
+        var ranked = rank(step, slots, snap, pkg)
+        // "The first result" means the first real one: in a list of repeated buttons ("Add to cart"
+        // on every result), cards marked Sponsored / Ad don't count. If only ads are on screen,
+        // nothing matches yet and the caller scrolls on.
+        // Only for a generic pick. When the user named the thing ("Domino's", "ADD next to Margherita"),
+        // an "Ad" tag on it doesn't make it the wrong one (Zomato marks Domino's itself as an ad).
+        val named = step.optString("textSlot").isNotEmpty() || step.optString("anchorSlot").isNotEmpty()
+        if (skipAds && !named && ranked.isNotEmpty()) {
+            val key = { m: Match -> Text.stable(m.node.label.ifEmpty { snap.labelsIn(m.node, 1).firstOrNull() ?: "" }) }
+            val k0 = key(ranked[0])
+            val t = step.optJSONObject("target")
+            // A list pick: repeated buttons, an add-to-cart button (one per result, even if only one
+            // is on screen), or a step about "the first/top result".
+            val listPick = (t?.optInt("similarCount", 1) ?: 1) >= 2 ||
+                (k0.isNotEmpty() && ranked.count { key(it) == k0 } >= 2) ||
+                Regex("^add( to (cart|bag|basket))?$", RegexOption.IGNORE_CASE).matches(Text.norm(t?.optString("leafLabel").orEmpty().ifEmpty { t?.optString("label").orEmpty() })) ||
+                Regex("\\b(first|top) (result|one|item|product)\\b", RegexOption.IGNORE_CASE).containsMatchIn(step.optString("intent"))
+            // (Only candidates that could win are checked: the card walk is not free on a big web page.)
+            if (listPick) {
+                val ads = ranked.filter { it.score >= 3.0 && sponsored(snap, it.node) }
+                // A container (the page, a list) scores through the ad button it holds; drop it too,
+                // or tapping its middle opens whatever product is there.
+                ranked = ranked.filter { m -> ads.none { a -> a === m || isAncestor(snap, m.node, a.node) } }
+            }
+        }
         if (ranked.isEmpty()) return null
         var top = ranked[0]
         // A container (tab bar, card) inherits its children's labels; when it scores about the same
@@ -50,6 +74,38 @@ object Resolver {
             }
         }
         return null
+    }
+
+    private val AD = Regex("\\bsponsored\\b|_sspa\\b|\\bpromoted\\b", RegexOption.IGNORE_CASE)
+
+    /**
+     * The element's card is an advert ("Sponsored Ad - …", Amazon's "sspa" links, a lone "Ad" tag).
+     * The card is the largest box around it holding no other button like it. Its "Sponsored" line
+     * may already be scrolled off the top, so hidden parts of the card count too.
+     */
+    fun sponsored(snap: Snapshot, n: UiNode): Boolean {
+        val key = Text.stable(n.label.ifEmpty { snap.labelsIn(n, 1).firstOrNull() ?: "" })
+        // Every box that holds another button like this one (walk up from each twin once).
+        val twinBoxes = HashSet<Int>()
+        if (key.isNotEmpty()) for (t in snap.nodes) {
+            if (t.idx == n.idx || !t.clickable || Text.stable(t.label) != key) continue
+            var p = snap.parentOf(t)
+            while (p != null && twinBoxes.add(p.idx)) p = snap.parentOf(p)
+        }
+        var card: UiNode? = null
+        var cur = snap.parentOf(n)
+        var hops = 0
+        var boundedByTwin = false
+        while (cur != null && hops < 20 && key.isNotEmpty()) {
+            if (cur.idx in twinBoxes) { boundedByTwin = true; break }
+            card = cur
+            cur = snap.parentOf(cur)
+            hops++
+        }
+        // With no other button like it anywhere, "largest box" would be the whole page: use the
+        // ordinary card instead.
+        val box = (if (boundedByTwin) card else snap.rowContainer(n)) ?: return false
+        return snap.subtree(box).any { x -> x.label.isNotEmpty() && (AD.containsMatchIn(x.label) || Text.norm(x.label) == "ad") }
     }
 
     private fun isAncestor(snap: Snapshot, a: UiNode, b: UiNode): Boolean {

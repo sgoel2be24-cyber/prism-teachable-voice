@@ -393,11 +393,15 @@ class Executor(private val svc: TvaAccessibilityService) {
                     return StepResult(true, "success", "skip", "already in the cart ($have)")
                 }
             }
-            val m = Resolver.resolve(st, c.slots, snap, c.app)
+            // Sponsored results are skipped while we can still scroll past them (Amazon's earbuds
+            // page opens with 5+ screens of ads).
+            val m = Resolver.resolve(st, c.slots, snap, c.app, skipAds = scrolls < 10)
             if (m != null) {
                 guardTap(snap, m.node)?.let { return it }
                 val long = st.optString("kind") == "longpress"
-                if (ADDISH.containsMatchIn(Brain.display(snap, m.node, 40).ifEmpty { m.node.label })) c.cartBefore = cartCount(snap, c.app) ?: 0
+                val shown = Brain.display(snap, m.node, 40).ifEmpty { m.node.label }
+                if (ADDISH.containsMatchIn(shown)) c.cartBefore = cartCount(snap, c.app) ?: 0
+                Dbg.log("TAP \"$shown\" card: ${snap.rowLabels(m.node, 4).joinToString(" | ") { it.take(60) }}${if (Resolver.sponsored(snap, m.node)) " [SPONSORED]" else ""}")
                 var ok = press(m.node, long)
                 svc.settle(350, 3000)
                 // Zomato ignores accessibility clicks on some views (its "Continue" bar, the
@@ -465,11 +469,19 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to five thumb scrolls with the fast matcher, then the LLM.
-            if (preScrolls < (if (st.optInt("scrollsBefore") >= 8) 1 else 5) && !c.cross) {
+            // Only adverts match so far ("Add to cart" on sponsored results): keep scrolling past them
+            // with the fast matcher (up to 10 screens) rather than handing a page of ads to the model.
+            val adsOnly = scrolls < 10 && Resolver.resolve(st, c.slots, snap, c.app, skipAds = false) != null
+            if (preScrolls < (if (adsOnly) 10 else if (st.optInt("scrollsBefore") >= 8) 1 else 5) && !c.cross) {
                 val s0 = sig(snap, c.app)
+                if (adsOnly) Dbg.log("PRESCROLL ${preScrolls + 1}: only sponsored results on screen")
                 scrollOnce(snap, c.app, forward = true)
                 preScrolls++
-                if (sig(svc.snapshot(), c.app) == s0) preScrolls = 5 else scrolls++ // screen doesn't scroll
+                // A web page's tree can lag the scroll by a moment: look twice before deciding the
+                // screen doesn't scroll.
+                var moved = sig(svc.snapshot(), c.app) != s0
+                if (!moved) { delay(900); moved = sig(svc.snapshot(), c.app) != s0 }
+                if (!moved) preScrolls = 10 else scrolls++ // screen doesn't scroll
                 continue
             }
             // An item far down a long menu: use the page's own "Search in …" box once, then match again.
@@ -567,10 +579,26 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val cy = n.bounds.exactCenterY()
                 val reachable = n.bounds.width() > 0 && cx in 0f..snap.screenW.toFloat() && cy in 0f..snap.screenH.toFloat() &&
                     (snap.imeTop() < 0 || cy < snap.imeTop())
+                val addish = ADDISH.containsMatchIn(Brain.display(snap, n, 50).ifEmpty { n.label })
+                val cartThen = if (addish) cartCount(snap, c.app) else null
+                if (addish && c.cartBefore == null) c.cartBefore = cartThen ?: 0
                 var ok = reachable && throughHud { Actions.tap(svc, cx, cy, false) }
                 if (!ok) ok = press(n)
                 svc.settle(400, 3000)
                 val what = Brain.display(snap, n, 50)
+                // One "Add to cart" that raised the cart count is the whole job: never let the model
+                // go on to add a second product (it once added three before noticing).
+                if (addish && ok && cartThen != null) {
+                    var now: Int? = null
+                    for (i in 0 until 5) { now = cartCount(svc.snapshot(), c.app); if (now != null && now > cartThen) break; delay(500) }
+                    if (now != null && now > cartThen) {
+                        c.llmTapped.add(Text.stable(what))
+                        c.history.add("tapped \"$what\" → added to the cart (cart $cartThen → $now)")
+                        Dbg.log("LLM add raised the cart $cartThen → $now")
+                        // Its own method, so the step ends here instead of being "verified" by more taps.
+                        return StepResult(true, "success", "llm-added", "added to the cart ($cartThen → $now)") to true
+                    }
+                }
                 if (ok) c.llmTapped.add(Text.stable(what))
                 c.history.add("tapped ${if (what.isNotEmpty()) "\"$what\"" else "an unlabelled element"} to ${d.reason.take(60)} → ${effect()}")
                 return if (d.completesStep) StepResult(ok, if (ok) "success" else "failed", "llm", d.reason) to true
