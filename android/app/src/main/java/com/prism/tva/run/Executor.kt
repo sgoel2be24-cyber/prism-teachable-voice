@@ -895,7 +895,12 @@ class Executor(private val svc: TvaAccessibilityService) {
         if (keys.isEmpty()) return null
         val labels = snap.nodes.filter { it.window == n.window && it.visible && it.label.isNotEmpty() }
         val seen = labels.flatMap { Text.norm(it.label).split(' ') }.toSet()
-        fun has(k: String) = k in seen || (k.length >= 6 && seen.any { w -> w.length >= 5 && Text.lev(w, k) <= 2 })
+        // Same word tolerance as the anchor match: "bread" is in Domino's "Garlic Breadsticks",
+        // "margarita" is "Margherita".
+        fun has(k: String) = k in seen || seen.any { w ->
+            (k.length >= 4 && w.length >= 4 && (w.startsWith(k) || k.startsWith(w) || Text.sim(w, k) >= 0.8)) ||
+                (k.length >= 6 && w.length >= 5 && Text.lev(w, k) <= 2)
+        }
         if (keys.all { has(it) }) return null
         // The sheet's title: its first real words (not an icon glyph, a price or the button itself).
         return labels.map { it.label.trim() }.firstOrNull { l ->
