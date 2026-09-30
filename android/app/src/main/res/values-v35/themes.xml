@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 15+ draws apps that target SDK 35 edge-to-edge: the screen would start under the status
+         bar and title bar, hiding the top of the main screen (seen on a Galaxy Z Flip6, Android 16).
+         Keep the classic layout, below the bars. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light">
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>
