@@ -6,6 +6,11 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 
 **Target apps:** Zomato (ordering from Domino's) and Amazon (search, add the first result to the cart); the Amazon task also runs on Myntra.
 
+**Demo video (4:59, one unedited take):** https://drive.google.com/file/d/14HaH2G-Hgk5Jzm1oJ1MMnzKWd4qDxTPv/view?usp=sharing
+Teaching the Zomato task by voice and taps → exact replay → paraphrase → a changed value (Farmhouse) → the assistant asking which restaurant, in that order.
+
+**Presentation:** [TIET_Update_Submission_ppt.pptx](TIET_Update_Submission_ppt.pptx) · **APK:** the `PRISM_GENAI_HACKATHON_Y2026` release on GitHub
+
 ## What works today
 
 - **Teach by demonstration.** A tap-capture overlay records every tap, including on Jetpack Compose screens and web views that don't report taps to accessibility services. It also records typing, keyboard search and back. Taps in other apps (a call, the notification shade) are ignored.
@@ -14,7 +19,7 @@ An Android assistant you teach by doing. Say a command, perform the task once in
 - **Reliable replay.** A fast path does scored element matching with no network call. The language model steps in only when the screen differs (pop-ups, unseen screens), and the user is asked when a value is missing or the screen can't be handled.
 - **The right item.** "The first result" skips Sponsored/Ad cards. A dish's options sheet must name the dish asked for, or it is closed without adding. On a restaurant it wasn't taught on, it searches the menu for the dish and prefers the plain "Margherita" over "Margherita Ultimate Cheese Pizza". An item already in the cart isn't added twice.
 - **Safety.** A payment/login/OTP/password guard is checked on every action.
-- **Run log**, spoken replies, and an on-screen status pill with Stop.
+- **Run log**, spoken replies, and an on-screen status pill with Stop. When a run hands back ("Your turn"), the pill's **🎤 Next** takes the next command right there, without going back to the app.
 - **Noisy demonstrations.** Switching to another app mid-demo (and the back gesture used to return) is dropped from the learned task.
 - **Another app, same task.** A task taught on Amazon runs on Myntra when the user says "on myntra": it opens the first result that isn't an advert, the language model finds the equivalent buttons ("Add to Bag"), it asks for a size instead of choosing one, and it stops once the bag count goes up.
 

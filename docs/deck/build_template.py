@@ -56,6 +56,9 @@ def text(slide, x, y, w, h, runs, size=14, color=TEXT, bold=False, font=BODY, al
             f.bold = o.get("bold", bold)
             f.italic = o.get("italic", italic)
             f.color.rgb = rgb(o.get("color", color))
+            if o.get("link"):
+                r.hyperlink.address = o["link"]
+                f.underline = True
     return tb
 
 
@@ -354,8 +357,10 @@ ws = [0.7 + 0.062 * len(t) for t in said]; g = (XW - sum(ws)) / 2; x = X0
 for t, w in zip(said, ws):
     voice(s, t, x, 6.1, w, h=0.4, size=10.5, dark=False); x += w + g
 rect(s, X0, 6.62, XW, 0.38, TINT, radius=0.1)
-text(s, X0 + 0.2, 6.62, XW - 0.4, 0.38, [[("Demo video (≤ 5 min, one unedited take): ", {"bold": True, "color": PURPLE}),
-     ("teach by voice + taps → exact replay → a paraphrase → a changed value → a question. Link in the README and the form.", {"color": TEXT})]],
+VIDEO = "https://drive.google.com/file/d/14HaH2G-Hgk5Jzm1oJ1MMnzKWd4qDxTPv/view?usp=sharing"
+text(s, X0 + 0.2, 6.62, XW - 0.4, 0.38, [[("Demo video (4:59, one unedited take): ", {"bold": True, "color": PURPLE}),
+     ("teach by voice + taps → exact replay → paraphrase → changed value → a question.  ", {"color": TEXT}),
+     ("Watch it on Google Drive", {"bold": True, "color": PURPLE, "link": VIDEO})]],
      size=11, anchor=MSO_ANCHOR.MIDDLE)
 notes(s, "Five moments from one Zomato task, captured on the phone on 30 Sep. 1: teaching, the red border and the Teaching pill with Done and Cancel. 2: what it learned, the steps in words with the command's values as slots, and the Veg filter tap marked not needed. 3: a replay by voice, the pill shows step 7 of 11, Tap ADD next to margherita. 4: a command without a restaurant, so it asks at the step that needs one. 5: it stops at the payment page and hands back. Below: three more commands from the 30 Sep evaluation that ran the same task with new values, a quantity, and a restaurant it was never taught on.")
 
@@ -503,7 +508,7 @@ notes(s, "All three bonus criteria are met with evidence from real runs. Beyond 
 s = S[10]; drop_body(s)
 chk = [("Working prototype code — public or shared GitHub repo", REPO + "  ·  release tag PRISM_GENAI_HACKATHON_Y2026"),
        ("README with reproducible setup instructions", "README with setup steps, requirements.txt, a Dockerfile that builds the APK, and the installable APK in the GitHub release"),
-       ("Demo video, max 5 minutes (YouTube or Drive link)", "One unedited take in the order the theme asks for; the link is in the README and the form"),
+       ("Demo video, max 5 minutes (YouTube or Drive link)", "4:59, one unedited take in the order the theme asks for, on Google Drive; linked in the README and on slide 5"),
        ("Presentation file (PPT or PDF)", "TIET_Update_Submission_ppt.pptx, in the repository"),
        ("Architecture, target apps and known limitations (Theme 3)", "docs/architecture.md with diagrams; target apps and limitations in the README"),
        ("AI disclosure", "README → AI disclosure: gpt-oss-120b on Fireworks AI inside the app; Claude (Anthropic) as our coding assistant")]
