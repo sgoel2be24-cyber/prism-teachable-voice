@@ -95,4 +95,6 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 - Spoken answers use the phone's speech recogniser (English, India); in a noisy room, typing the answer in the app works too.
 - It never picks personal options (size, colour, address) on its own: it asks. It never pays, places an order or enters a login, OTP or password.
 - Zomato now keeps a separate cart per restaurant, so ordering from a second restaurant doesn't touch the first cart. If an app does ask to replace or clear a cart, the assistant asks the user instead of deciding.
+- A task taught with the app in English can't be run after the app is switched to Hindi (the buttons can no longer be recognised): the assistant says so at the first step instead of guessing, and suggests switching the app back or teaching the task again in Hindi. The payment and login guard knows the common Hindi phrases too.
+- If a command names an app that isn't installed ("… in Swiggy"), the assistant says so rather than running the task in the app it was taught in.
 - A dish must be recognisable by name: if the options sheet that opens doesn't name the dish asked for (a very different menu name, or the name only in a picture), the assistant closes it without adding and tries again; if it can't find the right one, it stops and says what it found.
