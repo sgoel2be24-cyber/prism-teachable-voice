@@ -6,7 +6,9 @@ const sharp = require("sharp");
 const md = require("react-icons/md");
 const path = require("path");
 
-const MEMBERS = process.env.MEMBERS || ""; // "Name One · Name Two · …"
+// Team members, one per entry: "Name|year, branch"
+const MEMBERS = (process.env.MEMBERS || "Shikhar Goel|3rd year, Computer Engineering;Ishpreet Singh|3rd year, Computer Engineering")
+  .split(";").map((m) => m.split("|")).filter((m) => m[0]);
 const OUT = process.env.OUT || "TIET_Update_Submission_ppt.pptx";
 
 // Palette: ink dominates, coral is the one sharp accent, teal means "verified".
@@ -38,7 +40,7 @@ async function icon(name, color, size = 256) {
     ["MdTranslate", WHITE], ["MdCheckCircle", TEAL], ["MdBlock", CORAL], ["MdPanTool", WHITE], ["MdStorefront", WHITE],
     ["MdRecordVoiceOver", WHITE], ["MdWifiOff", WHITE], ["MdScreenLockPortrait", WHITE], ["MdInstallMobile", WHITE],
     ["MdPhoneAndroid", WHITE], ["MdSpeed", WHITE], ["MdCode", WHITE], ["MdScience", WHITE], ["MdCloudQueue", WHITE],
-    ["MdMic", CORAL], ["MdCheckCircle", WHITE],
+    ["MdMic", CORAL], ["MdCheckCircle", WHITE], ["MdLanguage", WHITE], ["MdRestaurantMenu", WHITE],
   ];
   for (const [n, c] of need) I[n + "_" + c] = await icon(n, c);
 
@@ -104,19 +106,25 @@ async function icon(name, color, size = 256) {
       x: M, y: 1.2, w: 8.2, h: 1.65, fontFace: HEAD, fontSize: 46, bold: true, color: WHITE, margin: 0, valign: "top", isTextBox: true,
     });
     s.addText("An Android assistant you teach by doing. Show it a task once, then just say it — with new values, new wording, even in another app.", {
-      x: M, y: 3.0, w: 7.6, h: 1.0, fontFace: BODY, fontSize: 20, color: ICE, margin: 0, valign: "top", isTextBox: true,
+      x: M, y: 2.95, w: 7.6, h: 1.0, fontFace: BODY, fontSize: 20, color: ICE, margin: 0, valign: "top", isTextBox: true,
     });
-    voice(s, "“Order a Margherita pizza from Domino’s on Zomato”", M, 4.2, 6.4, { dark: false, h: 0.6, size: 16 });
+    voice(s, "“Order a Margherita pizza from Domino’s on Zomato”", M, 4.05, 6.4, { dark: false, h: 0.6, size: 16 });
     s.addText([
       { text: "Team Update", options: { bold: true, color: WHITE, fontSize: 18, breakLine: true } },
-      { text: "Thapar Institute of Engineering and Technology (TIET)", options: { color: ICE, fontSize: 15, breakLine: !!MEMBERS } },
-      ...(MEMBERS ? [{ text: MEMBERS, options: { color: ICE, fontSize: 14 } }] : []),
-    ], { x: M, y: 5.1, w: 7.6, h: 1.1, fontFace: BODY, margin: 0, valign: "top", paraSpaceAfter: 4, isTextBox: true });
+      { text: "Thapar Institute of Engineering and Technology (TIET), Patiala", options: { color: ICE, fontSize: 14 } },
+    ], { x: M, y: 4.9, w: 7.6, h: 0.7, fontFace: BODY, margin: 0, valign: "top", paraSpaceAfter: 2, isTextBox: true });
+    MEMBERS.forEach(([name, what], i) => {
+      const x = M + i * 3.7;
+      s.addText([
+        { text: name, options: { bold: true, color: WHITE, fontSize: 15, breakLine: true } },
+        { text: what || "", options: { color: ICE, fontSize: 12.5 } },
+      ], { x, y: 5.65, w: 3.5, h: 0.62, fontFace: BODY, margin: 0, valign: "top", isTextBox: true });
+    });
     s.addText("Zomato · Amazon · Myntra   |   Accessibility Service only   |   Stops at payment and login", {
       x: M, y: 6.5, w: 8, h: 0.35, fontFace: BODY, fontSize: 12, color: "8A91B4", margin: 0, isTextBox: true,
     });
     phone(s, "learned.png", 9.35, 0.75, 6.0);
-    s.addNotes("Theme 3, Teachable Voice Automation. Team Update from TIET. One sentence: you teach the phone a task by doing it once while it listens and watches; after that you just say it, with different values or wording, and it does it through the accessibility service, stopping before payment. The phone shows the task it learned from one Zomato demo.");
+    s.addNotes("Theme 3, Teachable Voice Automation. Team Update from TIET: Shikhar Goel and Ishpreet Singh, third-year Computer Engineering. One sentence: you teach the phone a task by doing it once while it listens and watches; after that you just say it, with different values or wording, and it does it through the accessibility service, stopping before payment. The phone shows the task it learned from one Zomato demo.");
     footer(s, true);
   }
 
@@ -300,7 +308,7 @@ async function icon(name, color, size = 256) {
       ["Open the first real result", "in another app; skips Sponsored / AD"],
       ["LLM picks one action", "dismiss a pop-up, pick an outlet"],
       ["Ask one question", "“Which restaurant?” “Which size?”"],
-      ["Hand back", "“I’ve stopped before checkout”"],
+      ["Hand back", "“…before paying. Your turn.”"],
     ];
     const bx = M, bw = 1.2, g = 0.08, base = 6.25;
     rungs.forEach(([t, d], i) => {
@@ -317,7 +325,7 @@ async function icon(name, color, size = 256) {
     const stats = [
       ["0", "LLM calls on the judges’ Zomato sentence, in all 8 runs (31–47 s each)"],
       ["35 / 38", "Zomato steps replayed without the LLM across the first six test commands"],
-      ["2.8 s", "to stop and say why when the app was signed out — no taps, no loop"],
+      ["≤ 5 s", "to stop and say why when the app is signed out (2.8 s) or switched to Hindi (5 s) — no taps"],
     ];
     stats.forEach(([n, d], i) => {
       const y = 1.7 + i * 1.55;
@@ -356,7 +364,7 @@ async function icon(name, color, size = 256) {
       ["Login, OTP, password screens", "never touched, even without a field"],
       ["“Not accepting orders”", "stops with the app’s own words"],
       ["Replace or clear a cart", "asks the user first"],
-      ["Stuck", "reports the step within 30 s"],
+      ["Stuck: signed out, app in Hindi", "says why within 5 s, taps nothing"],
     ];
     guard.forEach(([t, d], i) => {
       const y = 2.45 + i * 0.8;
@@ -392,9 +400,9 @@ async function icon(name, color, size = 256) {
       s.addText(d, { x: x + 0.25, y: 3.38, w: cw - 0.4, h: 0.8, fontFace: BODY, fontSize: 12.5, color: ICE, margin: 0, valign: "top", isTextBox: true });
     });
     const more = [
-      ["Taught on Domino’s, ordered from Pizza Hut", "outlet picker, menu search, the right Margherita — 64 s"],
-      ["One Zomato demo, six new commands", "exact, paraphrase, new pizza, two pizzas, to Work, “order something”: 6/6"],
-      ["Signed out of Zomato", "stopped in 2.8 s: “you seem to be signed out; please sign in”"],
+      ["Every judges’ sentence, verbatim", "exact, both paraphrases, Farmhouse, two pizzas, to Work, “Order pizza.”: all handled"],
+      ["“Order garlic bread from dominos”", "Classic Stuffed Garlic Bread in the cart — 58 s, no LLM calls"],
+      ["Taught on Domino’s, ordered from Pizza Hut", "outlet picker, menu search, the plain Margherita — 63 s"],
       ["Learn from one demo, replay with a new value", "4/4, including a demo interrupted by switching apps"],
     ];
     more.forEach(([t, d], i) => {
@@ -405,11 +413,63 @@ async function icon(name, color, size = 256) {
         { text: d, options: { color: ICE, fontSize: 12 } },
       ], { x: x + 0.45, y, w: 5.6, h: 0.8, fontFace: BODY, fontSize: 14, valign: "top", margin: 0, isTextBox: true });
     });
-    s.addText("Oppo Reno3, Android 12 · app force-stopped before every run · full tables and method in docs/ of the repository", {
+    s.addText("Oppo Reno3, Android 12 · 28–30 Sep · app force-stopped before every run · full tables and method in docs/ of the repository", {
       x: M, y: 6.62, w: W - 2 * M, h: 0.3, fontFace: BODY, fontSize: 11, color: "8A91B4", margin: 0, isTextBox: true,
     });
-    s.addNotes("All numbers come from benches that force-stop the app before each run and log every step; the method and every table are in the docs folder. The judges' own sentence reached payment eight times out of eight without a single language-model call.");
+    s.addNotes("All numbers come from benches that force-stop the app before each run and log every step; the method and every table are in the docs folder. The judges' own sentence reached payment eight times out of eight without a single language-model call. On 30 September we ran every sentence from the theme's test table verbatim, including the rubric's own garlic-bread example, and all were handled.");
     footer(s, true);
+  }
+
+  // ---------- 9b. A new app ----------
+  {
+    const s = pres.addSlide();
+    s.background = { color: WHITE };
+    heading(s, "No hard-coded flows", "Taught on an app it had never seen");
+    card(s, M, 1.7, 5.3, 4.9, TINT, TINT);
+    s.addText("TAUGHT ONCE, BY TAPPING THROUGH IT", { x: M + 0.3, y: 1.92, w: 4.8, h: 0.3, fontFace: HEAD, fontSize: 11, bold: true, color: MUTED, charSpacing: 2, margin: 0, isTextBox: true });
+    voice(s, "“Open the pytorch repository on GitHub”", M + 0.3, 2.3, 4.7, { h: 0.55, size: 14 });
+    s.addText("What it learned", { x: M + 0.3, y: 3.15, w: 4.7, h: 0.35, fontFace: HEAD, fontSize: 13, bold: true, color: MUTED, margin: 0, isTextBox: true });
+    s.addText([
+      { text: "Open ", options: { color: TEXT } },
+      { text: "{repository}", options: { color: CORAL } },
+      { text: " repository on GitHub", options: { color: TEXT } },
+    ], { x: M + 0.3, y: 3.5, w: 4.8, h: 0.45, fontFace: HEAD, fontSize: 17, bold: true, margin: 0, isTextBox: true });
+    const learned = [
+      ["Launch GitHub"],
+      ["Open search"],
+      ["Enter ", "{repository}"],
+      ["Select ", "{repository}", " in the results"],
+      ["Open the repository"],
+    ];
+    const runs = [];
+    learned.forEach((parts, i) => {
+      runs.push({ text: `${i + 1}   `, options: { bold: true, color: TEAL } });
+      parts.forEach((p, k) => {
+        runs.push({ text: p, options: { color: p.startsWith("{") ? CORAL : TEXT, bold: p.startsWith("{"), breakLine: k === parts.length - 1 && i < learned.length - 1 } });
+      });
+    });
+    s.addText(runs, { x: M + 0.3, y: 4.05, w: 4.8, h: 1.85, fontFace: BODY, fontSize: 14.5, paraSpaceAfter: 7, valign: "top", margin: 0, isTextBox: true });
+    s.addImage({ data: I["MdCheckCircle_" + TEAL], x: M + 0.3, y: 5.97, w: 0.28, h: 0.28 });
+    s.addText("“pytorch” was typed in the demo, so the repository name became a slot on its own.", {
+      x: M + 0.7, y: 5.87, w: 4.4, h: 0.5, fontFace: BODY, fontSize: 12.5, color: MUTED, valign: "middle", margin: 0, isTextBox: true,
+    });
+    const replays = [
+      ["“Open the tensorflow repository on GitHub”", "tensorflow/tensorflow opened · 18 s · no LLM calls"],
+      ["“open the linux repository on github”", "torvalds/linux opened · 17 s · no LLM calls"],
+      ["“show me the react repo on github”", "a paraphrase: understood, and React’s repository opened"],
+    ];
+    replays.forEach(([said, got], i) => {
+      const y = 1.7 + i * 1.22;
+      voice(s, said, 6.2, y, 6.53, { h: 0.55, size: 14 });
+      s.addImage({ data: I["MdCheckCircle_" + TEAL], x: 6.3, y: y + 0.7, w: 0.28, h: 0.28 });
+      s.addText(got, { x: 6.7, y: y + 0.66, w: 6.0, h: 0.36, fontFace: BODY, fontSize: 14, color: TEXT, valign: "middle", margin: 0, isTextBox: true });
+    });
+    card(s, 6.2, 5.45, 6.53, 1.15, INK, INK);
+    s.addText("There is no per-app code path — not for GitHub, and not for Zomato, Amazon or Myntra either. The same recorder, generaliser and replay engine learned this from one demonstration, the way a judge teaches a new flow.", {
+      x: 6.45, y: 5.45, w: 6.1, h: 1.15, fontFace: BODY, fontSize: 13.5, color: WHITE, valign: "middle", margin: 0, isTextBox: true,
+    });
+    s.addNotes("To check that nothing is tuned to our three target apps, we taught a task on GitHub's Android app, which the assistant had never seen: open a repository by name. One demonstration; then new repository names ran in about 17 to 18 seconds with no language-model calls, and a paraphrase was understood too. The repository name became a slot on its own.");
+    footer(s);
   }
 
   // ---------- 10. Theme 3 test cases ----------
@@ -421,14 +481,14 @@ async function icon(name, color, size = 256) {
       ["T1", "Teach – food", "Learned from one demo; steps shown in words"],
       ["T2", "Exact replay", "Stops before paying, 8/8, no LLM calls"],
       ["T3", "Paraphrase", "“Get me a margherita…”, “I want to order…” (asks restaurant)"],
-      ["T4", "Slot: item", "Farmhouse in cart; also another restaurant"],
+      ["T4", "Slot: item", "Farmhouse, garlic bread, another restaurant"],
       ["T5", "Slot: quantity", "“two” → quantity 2 on the sheet, verified"],
       ["T6", "Slot: address", "“deliver to work” → Work selected"],
       ["T7", "Screen change", "Pop-up dismissed, item already in cart, shop closed"],
       ["T8", "Teach – e-commerce", "Amazon task learned, distinct from T1"],
       ["T9", "Cross slot + replay", "“phone case” → first non-sponsored result"],
-      ["T10", "Genuinely stuck", "Signed out → stops in 2.8 s, no taps"],
-      ["T11", "Credential boundary", "Stops at payment: “Your turn”"],
+      ["T10", "Genuinely stuck", "Signed out 2.8 s · app in Hindi 5 s · no taps"],
+      ["T11", "Credential boundary", "Stops before paying: “Your turn.”"],
       ["T12", "Unknown intent", "“I haven’t learned that yet. Teach me?”"],
       ["T13", "Ambiguity", "“Order pizza.” → asks restaurant, then pizza"],
       ["T14", "Reporting", "“No… stopped at step 2 of 11 (Open search bar)”"],
@@ -499,7 +559,7 @@ async function icon(name, color, size = 256) {
         x: x + 0.28, y: 2.85, w: cw - 0.5, h: 2.6, fontFace: BODY, fontSize: 13.5, color: TEXT, paraSpaceAfter: 9, valign: "top", margin: 0, isTextBox: true,
       });
     });
-    const facts = [["~4,000", "lines of Kotlin, 17 files"], ["1", "library: Kotlin coroutines"], ["3.4 MB", "release APK"], ["0", "app SDKs, deep links or root"]];
+    const facts = [["~4,300", "lines of Kotlin, 17 files"], ["1", "library: Kotlin coroutines"], ["3.5 MB", "release APK"], ["0", "app SDKs, deep links or root"]];
     facts.forEach(([n, d], i) => {
       const x = M + i * (cw + g);
       s.addText([
@@ -523,13 +583,15 @@ async function icon(name, color, size = 256) {
       ["MdInstallMobile_" + WHITE, "Sideloading in India", "Play Protect blocks apps with an accessibility service from browsers and chat apps; install over USB or pause the scan."],
       ["MdStorefront_" + WHITE, "Slow networks stall apps", "It taps the app’s “Try Again” up to three times, then says where it stopped."],
       ["MdTranslate_" + WHITE, "Speech is English (India)", "Spoken answers use the phone’s recogniser; typing in the app works too."],
+      ["MdLanguage_" + WHITE, "Taught in English, app now in Hindi", "It stops at the first step and says so; switch the app back or teach the task again in Hindi."],
+      ["MdRestaurantMenu_" + WHITE, "Loose dish names", "“Garlic bread” picks the closest name on screen (Classic Stuffed Garlic Bread); say the full name for a specific one."],
     ];
     lim.forEach(([ic, t, d], i) => {
-      const x = M + (i % 2) * 6.17, y = 1.7 + Math.floor(i / 2) * 1.6;
-      card(s, x, y, 5.95, 1.4, TINT, TINT);
-      circleIcon(s, ic, x + 0.25, y + 0.35, 0.66, INK2);
-      s.addText(t, { x: x + 1.1, y: y + 0.18, w: 4.65, h: 0.4, fontFace: HEAD, fontSize: 15, bold: true, color: TEXT, margin: 0, isTextBox: true });
-      s.addText(d, { x: x + 1.1, y: y + 0.58, w: 4.65, h: 0.75, fontFace: BODY, fontSize: 13, color: MUTED, valign: "top", margin: 0, isTextBox: true });
+      const x = M + (i % 2) * 6.17, y = 1.65 + Math.floor(i / 2) * 1.2;
+      card(s, x, y, 5.95, 1.05, TINT, TINT);
+      circleIcon(s, ic, x + 0.22, y + 0.22, 0.6, INK2);
+      s.addText(t, { x: x + 1.0, y: y + 0.12, w: 4.8, h: 0.36, fontFace: HEAD, fontSize: 14.5, bold: true, color: TEXT, margin: 0, isTextBox: true });
+      s.addText(d, { x: x + 1.0, y: y + 0.48, w: 4.8, h: 0.52, fontFace: BODY, fontSize: 12.5, color: MUTED, valign: "top", margin: 0, isTextBox: true });
     });
     s.addNotes("These are all in the README too. The sideloading one matters for anyone installing the APK in India: Play Protect's enhanced fraud protection blocks apps with an accessibility service when they come from a browser or chat app; adb install or pausing the scan works.");
     footer(s);
