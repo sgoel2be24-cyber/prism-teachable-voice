@@ -99,8 +99,9 @@ class Recorder(private val svc: TvaAccessibilityService) {
         main.postDelayed({
             if (!active) return@postDelayed
             addCatcher()
-            svc.hud.show("● Teaching. Do the task, then tap Done.",
-                listOf("Done" to { finish() }, "Cancel" to { stop(save = false); svc.speaker.say("Cancelled.") }))
+            // Kept inside the status bar so it never covers a button the user needs to tap.
+            svc.hud.show("● Teaching",
+                listOf("Done" to { finish() }, "Cancel" to { stop(save = false); svc.speaker.say("Cancelled.") }), compact = true)
         }, 700)
     }
 

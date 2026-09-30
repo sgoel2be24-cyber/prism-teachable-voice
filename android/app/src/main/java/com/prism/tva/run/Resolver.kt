@@ -180,6 +180,17 @@ object Resolver {
                 // that bar is not tapping the suggestion "wireless earbuds".
                 if (hit && !wantEditable && !a.editable &&
                     snap.subtree(a).any { it.editable && Text.fuzzyContains(it.label, slotValue) }) { s -= 3.0; why.append("field ") }
+                // The words around the value are the demo's too: 'Repositories with "tensorflow"'
+                // beats 'Code with "tensorflow"' when the demo tapped 'Repositories with "pytorch"'.
+                if (hit && literal.isNotEmpty()) {
+                    val demoW = Text.tokens(literal).toSet()
+                    val valW = Text.tokens(slotValue).toSet()
+                    if (labels.any { l ->
+                            val w = Text.tokens(l)
+                            val rest = w.filter { it !in valW }
+                            w.containsAll(valW) && rest.isNotEmpty() && rest.all { it in demoW }
+                        }) { s += 1.0; why.append("rest ") }
+                }
             } else if (literal.isNotEmpty() && !wantEditable) {
                 val nl = Text.norm(literal)
                 val sl = Text.stable(literal)
