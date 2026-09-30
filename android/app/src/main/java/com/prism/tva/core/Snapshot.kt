@@ -170,7 +170,40 @@ class Snapshot(
     fun rowLabels(n: UiNode, limit: Int = 14): List<String> {
         val own = labelsIn(n, 12).map { Text.norm(it) }.toSet()
         val row = rowContainer(n) ?: return emptyList()
-        return labelsIn(row, 30).filter { Text.norm(it) !in own }.take(limit)
+        val labels = labelsIn(row, 30).filter { Text.norm(it) !in own }
+        // A short button's own little box can hold one word of its own and not the dish: Zomato's
+        // "ADD" sits over "customisable", and the card around both says "Margherita Pizza". Then the
+        // card's labels follow (after the box's, so what was matched before still comes first).
+        val shortButton = own.isNotEmpty() && own.sumOf { Text.stable(it).length } <= 6
+        if (shortButton && labels.size < 2) {
+            val card = cardAround(row, n)
+            if (card != null) {
+                val seen = (own + labels.map { Text.norm(it) }).toMutableSet()
+                val more = labelsIn(card, 30).filter { seen.add(Text.norm(it)) }
+                return (labels + more).take(limit)
+            }
+        }
+        return labels.take(limit)
+    }
+
+    /**
+     * The largest box around [row] that is still one card: not a scrolling list, at most a third of
+     * the screen high, and holding no other element like [n]. Null when [row] is already the card.
+     */
+    private fun cardAround(row: UiNode, n: UiNode): UiNode? {
+        val others = twins(n).filter { it.idx != n.idx }
+        var cur = parentOf(row)
+        var best: UiNode? = null
+        var hops = 0
+        while (cur != null && hops < 8) {
+            val c = cur
+            if (c.scrollable || c.bounds.height() > screenH / 3) break
+            if (others.any { isInside(it, c) }) break
+            best = c
+            cur = parentOf(c)
+            hops++
+        }
+        return best
     }
 
     fun imeTop(): Int = windows.firstOrNull { it.isIme }?.bounds?.top ?: -1

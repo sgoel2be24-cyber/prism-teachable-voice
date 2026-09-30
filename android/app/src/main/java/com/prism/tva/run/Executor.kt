@@ -546,6 +546,18 @@ class Executor(private val svc: TvaAccessibilityService) {
                     return StepResult(true, "success", "skip", "the item went straight into the cart ($cartBefore → $now)")
                 }
             }
+            // A dish the demo didn't use (Farmhouse after a Margherita demo) is rarely where the demo's
+            // dish sat: on a menu with its own search box, search for it before scrolling around.
+            val newValue = c.slots[st.optString("anchorSlot")].orEmpty()
+            val demoValue = com.prism.tva.recipe.Matcher.examples(c.recipe)[st.optString("anchorSlot")].orEmpty()
+            if (!pageSearched && llmActs == 0 && !c.cross && !st.optBoolean("anchorSoft") &&
+                newValue.isNotEmpty() && demoValue.isNotEmpty() &&
+                !Text.fuzzyContains(newValue, demoValue) && !Text.fuzzyContains(demoValue, newValue) &&
+                snap.appNodes(c.app).any { Text.norm(it.label) == "add" }) {
+                val searched = searchInPage(snap, newValue, c)
+                if (searched != null) pageSearched = true
+                if (searched == true) continue
+            }
             // Cheap before clever: the element is often just below the fold (a sponsored banner
             // pushed the first result down). Up to five thumb scrolls with the fast matcher, then the LLM.
             // Only adverts match so far ("Add to cart" on sponsored results): keep scrolling past them
@@ -984,7 +996,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         // "margarita" is "Margherita".
         fun has(k: String) = k in seen || seen.any { w ->
             (k.length >= 4 && w.length >= 4 && (w.startsWith(k) || k.startsWith(w) || Text.sim(w, k) >= 0.8)) ||
-                (k.length >= 6 && w.length >= 5 && Text.lev(w, k) <= 2)
+                (k.length >= 6 && w.length >= 5 && Text.lev(w, k) <= 2) || Text.soundsLike(w, k)
         }
         if (keys.all { has(it) }) return null
         // The sheet's title: its first real words (not an icon glyph, a price or the button itself).

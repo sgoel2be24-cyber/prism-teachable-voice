@@ -59,6 +59,26 @@ object Text {
         return prev[n]
     }
 
+    /** A word's consonants without h, repeats collapsed: "margherita", "margarita", "maargarita" -> "mrgrt". */
+    fun skeleton(w: String): String {
+        val sb = StringBuilder()
+        for (ch in norm(w)) {
+            if (!ch.isLetter() || ch in "aeiouyh") continue
+            if (sb.isEmpty() || sb.last() != ch) sb.append(ch)
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Two longer words that sound the same: the speech recogniser writes the dish on the menu,
+     * "Margherita", as "Margarita" or "maargarita".
+     */
+    fun soundsLike(a: String, b: String): Boolean {
+        if (a.length < 5 || b.length < 5) return false
+        val x = skeleton(a)
+        return x.length >= 4 && x == skeleton(b)
+    }
+
     /** 0..1 similarity of the normalised strings. */
     fun sim(a: String?, b: String?): Double {
         val x = norm(a).take(120)
@@ -84,7 +104,8 @@ object Text {
         return n.split(' ').all { t ->
             ht.any { w ->
                 w == t ||
-                    (t.length >= 4 && w.length >= 4 && (w.startsWith(t) || t.startsWith(w) || sim(w, t) >= 0.8))
+                    (t.length >= 4 && w.length >= 4 && (w.startsWith(t) || t.startsWith(w) || sim(w, t) >= 0.8)) ||
+                    soundsLike(w, t)
             }
         }
     }

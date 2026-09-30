@@ -220,7 +220,7 @@ object Resolver {
                     val v = Text.norm(anchorSlotValue)
                     // Word by word, so a misheard "margarita pizza" still names "Margherita Pizza".
                     fun sameWords(a: List<String>, b: List<String>) = a.size == b.size && a.zip(b).all { (x, y) ->
-                        x == y || (x.length >= 5 && y.length >= 5 && Text.sim(x, y) >= 0.75)
+                        x == y || (x.length >= 5 && y.length >= 5 && Text.sim(x, y) >= 0.75) || Text.soundsLike(x, y)
                     }
                     fun exact(label: String): Boolean {
                         val l = Text.norm(label)
@@ -240,7 +240,7 @@ object Resolver {
                             // "Korean Corn & Jalapeno Garlic Bread").
                             val vw = v.split(' ').filter { it.isNotBlank() }
                             fun same(w: String, x: String) = w == x || (x.length >= 4 && w.startsWith(x)) ||
-                                (x.length >= 5 && w.length >= 5 && Text.sim(w, x) >= 0.75)
+                                (x.length >= 5 && w.length >= 5 && Text.sim(w, x) >= 0.75) || Text.soundsLike(w, x)
                             // (A section line such as "In Garlic Breads & Dips" names no dish.)
                             val extra = row.mapNotNull { l ->
                                 val lw = Text.norm(l).split(' ').filter { it.isNotBlank() }
