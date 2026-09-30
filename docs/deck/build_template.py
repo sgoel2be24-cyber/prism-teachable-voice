@@ -1,6 +1,6 @@
 # TIET_Update_Submission_ppt.pptx on the organisers' template (Samsung PRISM GenAI Hackathon, 3rd edition).
 # Usage: node gen_icons.js && python3 build_template.py ../../TIET_Update_Submission_ppt.pptx   (needs python-pptx; icons need react-icons + sharp)
-# The template's 12 sections stay in order with their headings; follow-on slides sit inside a section.
+# The template's 12 slides stay exactly as they are, in order, with their headings; we fill each one.
 import copy, os, sys
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
@@ -272,129 +272,62 @@ table(s, X0, 2.1, XW, rows, [3.5, 3.7, 4.1], row_h=0.72, size=12.5)
 notes(s, "Existing options: assistants reach only exposed app actions; macro apps are hand-built and brittle; LLM screen agents call a model for every step, which is slow, costly and not repeatable; programming by demonstration, like SUGILITE, had the right idea but no way to recover when a screen changes. We combine demonstration with a deterministic replay engine and use the model only as a fallback, with a hard hand-off at payment and login.")
 
 
-# ================= 4. Our solution =================
+# ================= 4. Our solution & architecture diagram (one slide) =================
 s = S[3]; drop_body(s)
-kicker(s, "Teach once by doing. Run it by voice.", y=1.62)
-steps = [
-    ("1", "Teach", "Say the command, then do the task once. A tap-capture overlay records every tap, typed text, search and back."),
-    ("2", "Generalise", "Words from the command become slots: “ADD next to {item}”, “search {product}”. Stray taps are marked as noise."),
-    ("3", "Replay by voice", "New wording, new values, Hinglish, another app. Screens it knows replay with no language-model call."),
-    ("4", "Ask or hand back", "A missing value or an unexpected screen gets one clear question. Payment, OTP or login: “Your turn.”"),
-]
-cw, gap, y = 2.6, 0.3, 2.05
+steps = [("1", "Teach", "Say the command, do the task once"), ("2", "Generalise", "Command words become slots"),
+         ("3", "Replay by voice", "New wording, values, even another app"), ("4", "Ask or hand back", "One question; “Your turn.” at payment")]
+cw, gap = 2.66, 0.22
 for i, (n, t, d) in enumerate(steps):
     x = X0 + i * (cw + gap)
-    rect(s, x, y, cw, 2.7, TINT)
+    rect(s, x, 1.62, cw, 0.78, TINT)
     col = PURPLE if i == 3 else INK
-    rect(s, x + 0.22, y + 0.22, 0.52, 0.52, col, shape=MSO_SHAPE.OVAL)
-    text(s, x + 0.22, y + 0.22, 0.52, 0.52, n, size=17, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.22, y + 0.9, cw - 0.4, 0.4, t, size=17, bold=True, color=INK, font=HEAD, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.22, y + 1.38, cw - 0.4, 1.25, d, size=13, color=MUTED)
-    if i < 3: arrow(s, x + cw + 0.04, y + 0.48, x + cw + gap - 0.04, y + 0.48)
-text(s, X0, 5.0, 6, 0.3, "Taught once, then said like this:", size=13, bold=True, color=MUTED, font=HEAD)
-voice(s, "“Get me a margherita from dominos”", X0, 5.38, 3.3, size=12)
-voice(s, "“amazon pe pencil box search karke pehla result cart mein daal do”", X0 + 3.45, 5.38, 4.3, size=12)
-voice(s, "“search for a wallet on myntra and add the first result to my bag”", X0 + 7.9, 5.38, 3.4, size=11.5)
-text(s, X0, 6.12, XW, 0.35, "Everything on screen is read and tapped through Android’s Accessibility Service — no app APIs, no deep links, no hard-coded flows.", size=12.5, color=TEXT)
-notes(s, "Four stages. Teach: the user speaks the command and performs it once; our overlay captures every tap even on screens that report nothing. Generalise: command words that show up in the demo become slots. Replay: paraphrases, new values, Hinglish, even another app. Ask or hand back: one specific question when something is missing, and a hard stop before payment or login. The three commands at the bottom are real runs.")
-
-# ---- 4b. Architecture diagram ----
-s4b = new_slide(S[3], "Architecture Diagram")
-s = s4b
-rect(s, X0 - 0.05, 1.72, XW + 0.1, 4.2, TINT, LAV, radius=0.14)
-text(s, X0 + 0.2, 1.84, 7, 0.3, "ON THE PHONE  ·  ANDROID ACCESSIBILITY SERVICE", size=10.5, bold=True, color=MUTED, font=HEAD)
-bw, bh, g, x0 = 1.62, 0.95, 0.29, X0 + 0.22
+    rect(s, x + 0.15, 1.78, 0.46, 0.46, col, shape=MSO_SHAPE.OVAL)
+    text(s, x + 0.15, 1.78, 0.46, 0.46, n, size=15, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 0.72, 1.66, cw - 0.8, 0.7, [[(t, {"bold": True, "size": 13.5, "color": INK, "font": HEAD})], [(d, {"size": 11, "color": MUTED})]],
+         anchor=MSO_ANCHOR.MIDDLE)
+    if i < 3: arrow(s, x + cw + 0.02, 2.01, x + cw + gap - 0.02, 2.01)
+rect(s, X0 - 0.05, 2.58, XW + 0.1, 3.42, TINT, LAV, radius=0.14)
+text(s, X0 + 0.2, 2.66, 8, 0.28, "ARCHITECTURE  ·  ALL ON THE PHONE, THROUGH ANDROID’S ACCESSIBILITY SERVICE", size=10, bold=True, color=MUTED, font=HEAD)
+bw, bh, g, x0 = 1.62, 0.8, 0.29, X0 + 0.22
 def lane(label, y, boxes):
-    text(s, x0, y - 0.36, 3, 0.3, label, size=13, bold=True, color=INK, font=HEAD)
+    text(s, x0, y - 0.3, 3, 0.26, label, size=12, bold=True, color=INK, font=HEAD)
     for i, (t, sub, llm, fill) in enumerate(boxes):
         x = x0 + i * (bw + g)
         rect(s, x, y, bw, bh, fill or WHITE, None if fill else "C9C3E6", radius=0.08)
-        text(s, x + 0.07, y + 0.04, bw - 0.14, bh - 0.08, [[(t, {"bold": True, "size": 12, "color": WHITE if fill else INK})],
-                                                         [(sub, {"size": 9.5, "color": ICE if fill else MUTED})]],
+        text(s, x + 0.06, y + 0.03, bw - 0.12, bh - 0.06, [[(t, {"bold": True, "size": 11.5, "color": WHITE if fill else INK})],
+                                                         [(sub, {"size": 9, "color": ICE if fill else MUTED})]],
              align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
         if llm:
-            rect(s, x + bw - 0.5, y - 0.13, 0.46, 0.24, PURPLE, radius=0.12)
-            text(s, x + bw - 0.5, y - 0.13, 0.46, 0.24, "LLM", size=8.5, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+            rect(s, x + bw - 0.48, y - 0.12, 0.44, 0.22, PURPLE, radius=0.11)
+            text(s, x + bw - 0.48, y - 0.12, 0.44, 0.22, "LLM", size=8, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
         if i < len(boxes) - 1:
             arrow(s, x + bw + 0.03, y + bh / 2, x + bw + g - 0.03, y + bh / 2)
-lane("Teach once", 2.55, [
-    ("Voice command", "phone’s speech recogniser", False, None),
+lane("Teach once", 3.3, [
+    ("Voice command", "speech → text", False, None),
     ("Recorder", "tap-capture overlay + UI-tree snapshot per tap", False, None),
     ("Generaliser", "slots from command words, card anchors", False, None),
     ("Refine", "slot names, step intents, noise, goals", True, None),
-    ("User review", "steps shown in words; delete / re-teach", False, None),
+    ("User review", "steps shown in words", False, None),
     ("Recipe store", "JSON on the phone", False, INK),
 ])
-lane("Run on command", 4.55, [
+lane("Run on command", 5.0, [
     ("Voice command", "or typed", False, None),
-    ("Matcher", "exact / template offline, else LLM → flow + slots + app", True, None),
+    ("Matcher", "speech → intent: flow + slots + app", True, None),
     ("Executor", "fast path → scroll / search → LLM action → ask", True, None),
-    ("Checks", "cart count, the right dish, not an advert", False, None),
-    ("Guard", "payment, login, OTP, password, closed shop", False, None),
+    ("Checks", "cart count, the right dish, not an ad", False, None),
+    ("Guard", "payment, login, OTP, password", False, None),
     ("Done / hand back", "spoken reply + run log", False, PURPLE),
 ])
 xs, xe = x0 + 5 * (bw + g) + bw / 2, x0 + 2 * (bw + g) + bw / 2
-arrow(s, xs, 2.55 + bh, xs, 3.99, INK, dash=True, head=False)
-arrow(s, xs, 3.99, xe, 3.99, INK, dash=True, head=False)
-arrow(s, xe, 3.99, xe, 4.53, INK, dash=True)
-rect(s, X0 - 0.05, 6.1, XW + 0.1, 0.6, WHITE, PURPLE, radius=0.1, dash=True)
-circle_icon(s, "MdCloudQueue", X0 + 0.1, 6.16, 0.48, PURPLE)
-text(s, X0 + 0.75, 6.1, XW - 0.9, 0.6, [[("Fireworks AI · gpt-oss-120b  ", {"bold": True, "color": INK}),
-     ("— the only network call: refine a demo once, understand a paraphrase, choose one action on an unfamiliar screen. About 1–2 s each.", {"color": MUTED})]],
-     size=12.5, anchor=MSO_ANCHOR.MIDDLE)
-notes(s, "Two pipelines on the phone. Teach: voice command, the recorder with our tap-capture overlay and a UI-tree snapshot per tap, the generaliser that finds slots, one LLM call to refine, a review screen, and a JSON recipe. Run: the matcher, offline first; the executor that escalates from a scored fast path to scrolling, page search and only then an LLM action or a question; checks that demand proof; and the guard. The violet tags mark where the LLM is used; it's the only network call.")
-
-# ---- 4c. How it works ----
-s4c = new_slide(s4b, "How it works")
-s = s4c
-kicker(s, "Speech to intent · UI-tree capture · generalisation · slot extraction · replay", y=1.62)
-rows = [
-    ("MdRecordVoiceOver", INK, "Speech → intent", "The phone’s recogniser (English, India) gives text. Exact and template matches run offline in milliseconds; paraphrases, Hinglish, missing values and “did the last run succeed?” go to the LLM, which returns flow, slot values, app and confidence as JSON."),
-    ("MdAccountTree", INK, "UI-tree capture", "Just before each demo tap reaches the app, every window’s accessibility tree is snapshotted and the touch is hit-tested the way Android dispatches it — so taps are captured on Jetpack Compose screens and web views that report none."),
-    ("MdAutoFixHigh", INK, "Generalisation", "Each step keeps the element, the card it sits in (“ADD next to Margherita”), its position and a plain-language intent. Mis-taps, an answered call and a filter the task didn’t need are marked as noise."),
-    ("MdTextFields", INK, "Slot extraction", "A command word that reappears in typed text (even a typed prefix plus a tapped suggestion), a tapped label or the tapped card becomes a slot. The LLM adds goals the demo didn’t show — quantity, delivery address."),
-    ("MdReplay", PURPLE, "Replay", "A scored matcher finds each step’s element on the live screen by label, id, card and position. Only when nothing is clearly ahead does the LLM choose one action; every step needs proof on screen before the next."),
-]
-for i, (ic, col, t, d) in enumerate(rows):
-    y = 1.98 + i * 0.97
-    circle_icon(s, ic, X0, y + 0.1, 0.6, col)
-    text(s, X0 + 0.8, y + 0.1, 2.3, 0.6, t, size=15, bold=True, color=INK, font=HEAD, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, X0 + 3.2, y, XW - 3.2, 0.82, d, size=12.5, color=MUTED, anchor=MSO_ANCHOR.MIDDLE)
-    if i < 4: arrow(s, X0 + 0.8, y + 0.93, X0 + XW, y + 0.93, LAV, w=0.75, head=False)
-notes(s, "These are the five things the theme asks us to explain. The key idea in capture is that we don't trust accessibility click events, which many modern screens never send; we intercept the touch ourselves and hit-test it against the UI tree. Slots follow the SUGILITE idea: a word from the command that reappears in the demo is a parameter.")
-
-# ---- 4d. Replay, proof and safety ----
-s4d = new_slide(s4c, "Replay engine, proof and safety")
-s = s4d
-kicker(s, "Cheapest step first; the model only when needed", y=1.62)
-rungs = [("Fast path", "scored match, no network"), ("Scroll, search the page", "swipes; the menu’s own search"),
-         ("Open the first real result", "another app; skips Sponsored / AD"), ("LLM picks one action", "dismiss a pop-up, pick an outlet"),
-         ("Ask one question", "“Which restaurant?” “Which size?”"), ("Hand back", "“…before paying. Your turn.”")]
-bx, rw, rg, base = X0, 0.98, 0.07, 6.55
-for i, (t, d) in enumerate(rungs):
-    x = bx + i * (rw + rg); h = 0.85 + i * 0.42
-    fill = GREEN if i == 0 else PURPLE if i >= 4 else INK2 if i == 3 else INK
-    rect(s, x, base - h, rw, h, fill, shape=MSO_SHAPE.RECTANGLE)
-    text(s, x, base - h + 0.06, rw, 0.35, str(i + 1), size=16, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER)
-    text(s, x - 0.03, base - h - 0.95, rw + 0.06, 0.9, [[(t, {"bold": True, "size": 10.5, "color": INK})], [(d, {"size": 9, "color": MUTED})]],
-         align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.BOTTOM)
-text(s, bx, base + 0.06, 6 * (rw + rg), 0.25, "cost and latency  →", size=10, italic=True, color=MUTED, align=PP_ALIGN.RIGHT)
-cx = 7.65
-rect(s, cx, 1.62, 4.67, 2.45, TINT)
-text(s, cx + 0.25, 1.75, 4.2, 0.35, "Proof before “done”", size=15, bold=True, color=GREEN, font=HEAD)
-for i, t in enumerate(["The cart or bag count went up", "The item’s card now shows − 1 +", "The options sheet names the dish asked for",
-                       "“First result” skips Sponsored / AD cards"]):
-    y = 2.18 + i * 0.44
-    icon(s, "MdCheckCircle", GREEN, cx + 0.25, y + 0.04, 0.26)
-    text(s, cx + 0.65, y, 3.9, 0.36, t, size=12.5, color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
-rect(s, cx, 4.2, 4.67, 2.5, INK)
-text(s, cx + 0.25, 4.33, 4.2, 0.35, "Always hands back", size=15, bold=True, color="C4B5FD", font=HEAD)
-for i, (t, d) in enumerate([("Pay, Place order, Proceed to buy", "never tapped"), ("Login, OTP, password screens", "never touched"),
-                            ("Signed out, or the app now in Hindi", "says why within 5 s, taps nothing"), ("Replace or clear a cart", "asks the user first")]):
-    y = 4.76 + i * 0.47
-    icon(s, "MdBlock", RED, cx + 0.25, y + 0.05, 0.26)
-    text(s, cx + 0.65, y, 3.95, 0.44, [[(t + "  ", {"bold": True, "color": WHITE}), (d, {"color": ICE, "size": 11.5})]], size=12.5, anchor=MSO_ANCHOR.MIDDLE)
-notes(s, "Each step climbs this ladder only as far as it must. Most steps end on rung one: a deterministic scored match, no network. The LLM is rung four, and it only ever chooses a single action on the live screen, which we then verify. Right: the executor needs evidence on screen before a step counts as done, and the guard, checked on every action, never touches payment, login, OTP or password screens.")
+arrow(s, xs, 3.3 + bh, xs, 4.42, INK, dash=True, head=False)
+arrow(s, xs, 4.42, xe, 4.42, INK, dash=True, head=False)
+arrow(s, xe, 4.42, xe, 4.98, INK, dash=True)
+rect(s, X0 - 0.05, 6.14, XW + 0.1, 0.56, WHITE, PURPLE, radius=0.1, dash=True)
+circle_icon(s, "MdCloudQueue", X0 + 0.1, 6.19, 0.46, PURPLE)
+text(s, X0 + 0.72, 6.14, XW - 0.85, 0.56, [[("Fireworks AI · gpt-oss-120b  ", {"bold": True, "color": INK}),
+     ("— the only network call: refine a demo once, understand a paraphrase, choose one action on an unfamiliar screen (1–2 s). Known screens replay with no model call.", {"color": MUTED})]],
+     size=11.5, anchor=MSO_ANCHOR.MIDDLE)
+notes(s, "Four stages on top: teach, generalise, replay by voice, and ask or hand back. Below, the architecture: two pipelines on the phone. Teach: voice command, the recorder with our tap-capture overlay and a UI-tree snapshot per tap, the generaliser that turns command words into slots, one LLM call to refine, a review screen, and a JSON recipe. Run: the matcher turns speech into a flow with slot values, offline first; the executor escalates from a scored fast path to scrolling and page search, and only then an LLM action or a question; checks demand proof on screen; the guard stops at payment, login, OTP and password. The violet tags mark the only places the LLM is used.")
 
 
 # ================= 5. Demo & walkthrough =================
@@ -458,92 +391,49 @@ text(s, X0 + 4.4, 5.7, 6.6, 1.0, [[("As a worklet: ", {"bold": True, "color": PU
 notes(s, "Impact: the Zomato order we taught is eleven steps; after one demonstration it's one sentence and under a minute hands-free. Use cases: everyday repeats, accessibility for people who find many small taps hard, a family member setting up tasks once for a parent, and Hinglish commands. As a worklet, it extends an assistant into any app through accessibility, without partner integrations.")
 
 
-# ================= 8. Innovation highlights, results and limitations =================
+# ================= 8. Innovation highlights, results and limitations (one slide) =================
 s = S[7]; drop_body(s)
-kicker(s, "Innovation highlights · six ideas that make a one-shot demo dependable", y=1.62)
-items = [("MdTouchApp", INK, "Tap capture that works everywhere", "Our own transparent overlay hit-tests every touch against the UI tree, so taps are recorded even where apps send no accessibility events."),
-         ("MdBolt", GREEN, "The model only where it’s needed", "Known screens replay with a scored matcher: fast, free, deterministic. Exact commands work with no network at all."),
-         ("MdVerifiedUser", INK, "Proof-checked steps", "“Done” needs evidence on screen — the cart count, a quantity stepper, the dish’s name, the next button."),
-         ("MdCleaningServices", INK, "Clean tasks from messy demos", "Mis-taps, an answered call, an unneeded filter or pop-up are dropped from what it learns."),
-         ("MdApps", PURPLE, "One demo, similar apps", "The Amazon task runs on Myntra: it finds “Add to Bag”, skips “AD” tiles and asks for your size."),
-         ("MdHelpOutline", INK, "Asks like a person", "One specific question when a value is missing or the choice is personal; a plain-language log of every run.")]
-cw, ch, gx, gy = 3.62, 2.3, 0.22, 0.25
-for i, (ic, col, t, d) in enumerate(items):
-    x = X0 + (i % 3) * (cw + gx); y = 2.05 + (i // 3) * (ch + gy)
-    rect(s, x, y, cw, ch, TINT)
-    circle_icon(s, ic, x + 0.25, y + 0.25, 0.62, col)
-    text(s, x + 1.02, y + 0.25, cw - 1.2, 0.62, t, size=14.5, bold=True, color=INK, font=HEAD, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.25, y + 1.05, cw - 0.45, 1.15, d, size=12.5, color=MUTED)
-notes(s, "If the jury remembers one thing: the language model is a fallback, not the engine. Replays on known screens are deterministic and verified, which is what makes a single demonstration dependable.")
-
-# ---- 8b. Results ----
-s8b = new_slide(S[7], "Results on a real phone")
-s = s8b
-kicker(s, "Measured cold-start runs, not a scripted demo", y=1.62)
-big = [("8 / 8", "Judges’ sentence", "Zomato, stops before paying · 0 LLM calls · 31–47 s"),
-       ("14 / 14", "Amazon, taught by hand", "first non-sponsored result · incl. Hinglish and paraphrases"),
-       ("7 / 7", "Myntra (Amazon task)", "skipped “AD” tiles · asked the size every time"),
-       ("18 / 18", "Commands understood", "Amazon test set · median 1.1 s")]
-cw, g = 2.66, 0.22
-for i, (n, t, d) in enumerate(big):
-    x = X0 + i * (cw + g)
-    rect(s, x, 2.0, cw, 2.3, INK if i != 2 else PURPLE)
-    text(s, x + 0.22, 2.15, cw - 0.3, 0.85, n, size=40, bold=True, color="A7F3D0" if i != 2 else WHITE, font=HEAD)
-    text(s, x + 0.22, 3.0, cw - 0.3, 0.38, t, size=14, bold=True, color=WHITE, font=HEAD)
-    text(s, x + 0.22, 3.4, cw - 0.35, 0.8, d, size=12, color=ICE)
-more = [("Every judges’ sentence, verbatim (30 Sep)", "exact, both paraphrases, Farmhouse, two pizzas, to Work, “Order pizza.”: all handled"),
-        ("“Order garlic bread from dominos”", "Classic Stuffed Garlic Bread in the cart — 58 s, no LLM calls"),
-        ("Taught on Domino’s, ordered from Pizza Hut", "outlet picker, menu search, the plain Margherita — 63 s"),
-        ("Learn from one demo, replay with a new value", "4/4, including a demo interrupted by switching apps")]
-for i, (t, d) in enumerate(more):
-    x = X0 + (i % 2) * 5.75; y = 4.6 + (i // 2) * 0.85
-    icon(s, "MdCheckCircle", GREEN, x, y + 0.04, 0.3)
-    text(s, x + 0.45, y, 5.2, 0.75, [[(t, {"bold": True, "color": INK, "size": 13.5})], [(d, {"color": MUTED, "size": 12})]])
-text(s, X0, 6.45, XW, 0.3, "Oppo Reno3, Android 12 · 28–30 Sep · app force-stopped before every run · full tables and method in docs/ of the repository", size=10.5, color=MUTED)
-notes(s, "All numbers come from benches that force-stop the app before each run and log every step; the method and every table are in the docs folder. The judges' own sentence reached payment eight times out of eight without a single language-model call. On 30 September we ran every sentence from the theme's test table verbatim, including the rubric's garlic-bread example, and all were handled.")
-
-# ---- 8c. Test cases ----
-s8c = new_slide(s8b, "Theme 3 test cases")
-s = s8c
-kicker(s, "All 14 pass on our build, plus the three bonuses", y=1.62)
-tests = [("T1", "Teach – food", "Learned from one demo; steps shown in words"), ("T2", "Exact replay", "Stops before paying, 8/8, no LLM calls"),
-         ("T3", "Paraphrase", "“Get me a margherita…”, “I want to order…” (asks restaurant)"), ("T4", "Slot: item", "Farmhouse, garlic bread, another restaurant"),
-         ("T5", "Slot: quantity", "“two” → quantity 2 on the sheet, verified"), ("T6", "Slot: address", "“deliver to work” → Work selected"),
-         ("T7", "Screen change", "Pop-up dismissed, item already in cart, shop closed"), ("T8", "Teach – e-commerce", "Amazon task learned, distinct from T1"),
-         ("T9", "Cross slot + replay", "“phone case” → first non-sponsored result"), ("T10", "Genuinely stuck", "Signed out 2.8 s · app in Hindi 5 s · no taps"),
-         ("T11", "Credential boundary", "Stops before paying: “Your turn.”"), ("T12", "Unknown intent", "“I haven’t learned that yet. Teach me?”"),
-         ("T13", "Ambiguity", "“Order pizza.” → asks restaurant, then pizza"), ("T14", "Reporting", "“No… stopped at step 2 of 11 (Open search bar)”"),
-         ("+3", "Noisy demo", "Mis-tap, call, unneeded filter dropped"), ("+4", "Similar app", "Amazon task runs on Myntra, 7/7"),
-         ("+3", "Mid-flow parameter", "“Which restaurant…?”, “Which size…?”")]
-def trows(part):
-    hd = {"bold": True, "color": MUTED, "size": 11, "font": HEAD}
-    out = [[("", hd), ("Test", hd), ("What happens", hd)]]
-    for i, t, d in part:
-        out.append([(i, {"bold": True, "color": PURPLE if i.startswith("+") else GREEN, "font": HEAD, "size": 11.5}),
-                    (t, {"bold": True, "size": 11.5}), (d, {"color": MUTED, "size": 11})])
-    return out
-table(s, X0, 1.98, 5.55, trows(tests[:9]), [0.55, 1.75, 3.25], row_h=0.47)
-table(s, X0 + 5.75, 1.98, 5.55, trows(tests[9:]), [0.55, 1.75, 3.25], row_h=0.47)
-notes(s, "The theme's own test table, in order, with what our build does on each. Details and timings for every row are in the evaluation documents in the repository.")
-
-# ---- 8d. Limitations ----
-s8d = new_slide(s8c, "Known limitations")
-s = s8d
-lim = [("MdWifiOff", "Paraphrases need the model", "Pop-ups, paraphrases and questions use the LLM key; exact and template commands work offline."),
-       ("MdSpeed", "Another app is slower", "About 45–60 s on Myntra versus 35–50 s on Amazon: unfamiliar screens go to the model."),
-       ("MdScreenLockPortrait", "Screen on, phone unlocked", "Accessibility services can’t act on a locked screen."),
-       ("MdInstallMobile", "Sideloading in India", "Play Protect blocks apps with an accessibility service from browsers and chat apps; install over USB or pause the scan."),
-       ("MdStorefront", "Slow networks stall apps", "It taps the app’s “Try Again” up to three times, then says where it stopped."),
-       ("MdTranslate", "Speech is English (India)", "Spoken answers use the phone’s recogniser; typing in the app works too."),
-       ("MdLanguage", "Taught in English, app now in Hindi", "It stops at the first step and says so; switch the app back or teach the task again in Hindi."),
-       ("MdRestaurantMenu", "Loose dish names", "“Garlic bread” picks the closest name on screen (Classic Stuffed Garlic Bread); say the full name for a specific one.")]
+colw, colg, top = 3.62, 0.22, 1.62
+xs = [X0 + i * (colw + colg) for i in range(3)]
+heads = [("Innovation highlights", PURPLE), ("Results on a real phone", GREEN), ("Known limitations", INK)]
+for x, (h, c) in zip(xs, heads):
+    rect(s, x, top, colw, 5.1, TINT)
+    text(s, x + 0.22, top + 0.15, colw - 0.4, 0.35, h, size=15, bold=True, color=c, font=HEAD)
+inn = [("MdTouchApp", "Tap capture everywhere", "our overlay hit-tests every touch, even where apps report none"),
+       ("MdBolt", "The model only when needed", "known screens replay with a scored matcher, no network"),
+       ("MdVerifiedUser", "Proof-checked steps", "cart count, − 1 +, the dish’s name before “done”"),
+       ("MdCleaningServices", "Clean tasks from messy demos", "mis-taps, a call, an unneeded filter are dropped"),
+       ("MdApps", "One demo, similar apps", "the Amazon task runs on Myntra, skips “AD” tiles"),
+       ("MdHelpOutline", "Asks like a person", "one question when a value is missing or personal")]
+for i, (ic, t, d) in enumerate(inn):
+    y = top + 0.62 + i * 0.73
+    circle_icon(s, ic, xs[0] + 0.22, y + 0.04, 0.42, INK if i % 2 else PURPLE)
+    text(s, xs[0] + 0.78, y, colw - 0.95, 0.7, [[(t, {"bold": True, "size": 12, "color": INK})], [(d, {"size": 10.5, "color": MUTED})]])
+stats = [("8 / 8", "judges’ sentence, 0 LLM calls"), ("14 / 14", "Amazon, taught by hand"), ("7 / 7", "Myntra (Amazon task)"), ("14 / 14", "theme test cases T1–T14")]
+for i, (n, d) in enumerate(stats):
+    x = xs[1] + 0.22 + (i % 2) * 1.62; y = top + 0.62 + (i // 2) * 1.02
+    rect(s, x, y, 1.52, 0.92, WHITE, LAV)
+    text(s, x + 0.12, y + 0.06, 1.3, 0.45, n, size=20, bold=True, color=PURPLE if i == 3 else GREEN, font=HEAD)
+    text(s, x + 0.12, y + 0.5, 1.33, 0.4, d, size=9.5, color=MUTED)
+for i, t in enumerate(["“Order garlic bread from dominos” → Classic Stuffed Garlic Bread",
+                       "Taught on Domino’s, ran on Pizza Hut (63 s)",
+                       "App switched to Hindi → says why in 5 s",
+                       "Every judges’ sentence handled, verbatim"]):
+    y = top + 2.75 + i * 0.56
+    icon(s, "MdCheckCircle", GREEN, xs[1] + 0.22, y + 0.04, 0.24)
+    text(s, xs[1] + 0.56, y, colw - 0.72, 0.52, t, size=10.5, color=TEXT)
+lim = [("MdWifiOff", "Paraphrases need the model", "exact commands work offline"),
+       ("MdSpeed", "Another app is slower", "45–60 s on Myntra vs 35–50 s on Amazon"),
+       ("MdScreenLockPortrait", "Screen on, phone unlocked", "services can’t act on a locked screen"),
+       ("MdInstallMobile", "Sideloading in India", "Play Protect: install over USB or pause it"),
+       ("MdLanguage", "Taught in English, app in Hindi", "stops and says so; re-teach in Hindi"),
+       ("MdRestaurantMenu", "Loose dish names", "“garlic bread” → the closest name on screen")]
 for i, (ic, t, d) in enumerate(lim):
-    x = X0 + (i % 2) * 5.73; y = 1.75 + (i // 2) * 1.2
-    rect(s, x, y, 5.57, 1.05, TINT)
-    circle_icon(s, ic, x + 0.22, y + 0.22, 0.6, INK2)
-    text(s, x + 1.0, y + 0.12, 4.45, 0.36, t, size=14, bold=True, color=INK, font=HEAD)
-    text(s, x + 1.0, y + 0.48, 4.45, 0.52, d, size=12, color=MUTED)
-notes(s, "These are all in the README too. The sideloading one matters for anyone installing the APK in India: Play Protect blocks apps with an accessibility service when they come from a browser or chat app; adb install or pausing the scan works.")
+    y = top + 0.62 + i * 0.73
+    circle_icon(s, ic, xs[2] + 0.22, y + 0.04, 0.42, INK2)
+    text(s, xs[2] + 0.78, y, colw - 0.95, 0.7, [[(t, {"bold": True, "size": 12, "color": INK})], [(d, {"size": 10.5, "color": MUTED})]])
+text(s, X0, 6.78, XW, 0.25, "Oppo Reno3, Android 12 · 28–30 Sep · app force-stopped before every run · full tables in docs/ of the repository", size=9.5, color=MUTED)
+notes(s, "Left: six ideas that make one demonstration dependable; the language model is a fallback, not the engine. Middle: measured cold-start runs; the judges' sentence reached payment eight times out of eight with no language-model call, and all fourteen theme test cases pass, including the rubric's garlic-bread example. Right: what we know today and how the assistant behaves in each case; all of these are in the README too.")
 
 
 # ================= 9. What's next =================
@@ -591,7 +481,7 @@ for i, (said, got) in enumerate([("“Open the tensorflow repository on GitHub�
     text(s, X0 + 0.65, y, 5.9, 0.38, [[(said + "  ", {"italic": True, "color": WHITE}), (got, {"color": "A7F3D0"})]], size=12, anchor=MSO_ANCHOR.MIDDLE)
 rect(s, X0 + 6.8, 4.4, 4.5, 2.3, WHITE, LAV)
 text(s, X0 + 7.05, 4.55, 4.1, 0.35, "Also", size=14, bold=True, color=PURPLE, font=HEAD)
-for i, t in enumerate(["No per-app code path — not even for our target apps", "App switched to Hindi → stops and says why in 5 s",
+for i, t in enumerate(["No per-app code path — not even for our target apps", "App switched to Hindi → says why in 5 s",
                        "Payment and login guard knows Hindi phrases", "Learns from a typed prefix + a tapped suggestion"]):
     y = 4.98 + i * 0.42
     icon(s, "MdCheckCircle", PURPLE, X0 + 7.05, y + 0.05, 0.25)
