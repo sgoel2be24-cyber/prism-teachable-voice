@@ -107,8 +107,8 @@ def voice(slide, said, x, y, w, h=0.5, size=13, dark=True):
     text(slide, x + d + 0.22, y, w - d - 0.32, h, said, size=size, italic=True, color=WHITE if dark else TEXT, anchor=MSO_ANCHOR.MIDDLE)
 
 
-def phone(slide, f, x, y, h):
-    w = h * 600 / 1088; b = 0.07
+def phone(slide, f, x, y, h, ratio=1088 / 600):
+    w = h / ratio; b = 0.07
     rect(slide, x - b, y - b, w + 2 * b, h + 2 * b, INK, radius=0.22)
     slide.shapes.add_picture(os.path.join(IMG, f), Inches(x), Inches(y), Inches(w), Inches(h))
     return w
@@ -332,21 +332,32 @@ notes(s, "Four stages on top: teach, generalise, replay by voice, and ask or han
 
 # ================= 5. Demo & walkthrough =================
 s = S[4]; drop_body(s)
-shots = [("teach.png", "1  Teaching", "Say the command, then do it. A red border and “Done” while you show the task."),
-         ("learned.png", "2  What it learned", "Steps in words, values in braces, the stray tap marked “not needed”."),
-         ("ask.png", "3  A missing value", "“Which product should I use?” — asked at the step that needs it."),
-         ("size_q.png", "4  A personal choice", "It asks for the size and lists what’s available. It never picks for you.")]
-h = 3.55; pw = h * 600 / 1088; gap = (XW - 4 * pw) / 3
+shots = [("w1_teach.png", "Teach it once", "Say the command, then do it. A red border and a “Teaching” pill while it watches."),
+         ("w2_learned.png", "It learns the task", "Steps in words, your values as {slots}, the stray Veg filter tap marked “not needed”."),
+         ("w3_run.png", "Replay by voice", "“Get me a margherita from dominos”: it runs the 11 steps and shows each one."),
+         ("w4_ask.png", "Asks what’s missing", "No restaurant in the command? It asks at the step that needs one, then carries on."),
+         ("w5_done.png", "Stops before paying", "At the payment page it hands back: “Your turn.” It never pays or signs in.")]
+R = 982 / 600; h = 3.0; pw = h / R; gap = (XW - 5 * pw) / 4; y0 = 1.6
 for i, (f, t, d) in enumerate(shots):
-    x = X0 + i * (pw + gap) + 0.07
-    phone(s, f, x, 1.72, h)
-    text(s, x - 0.05, 5.42, pw + 0.5, 0.3, t, size=13.5, bold=True, color=INK, font=HEAD)
-    text(s, x - 0.05, 5.72, pw + 0.55, 0.6, d, size=11, color=MUTED)
-rect(s, X0, 6.38, XW, 0.42, TINT, radius=0.1)
-text(s, X0 + 0.2, 6.38, XW - 0.4, 0.42, [[("Demo video (≤ 5 min, one unedited take): ", {"bold": True, "color": PURPLE}),
-     ("teach by voice + taps → exact replay → a paraphrase → a changed value → the assistant asking a question. Link in the README and the form.", {"color": TEXT})]],
-     size=11.5, anchor=MSO_ANCHOR.MIDDLE)
-notes(s, "Four moments from real runs: the teaching border with Done and Cancel; the learned Zomato task, in words, with its slots and the Veg filter marked not needed; a missing value asked mid-run; and on Myntra, a size question listing the sizes on offer. The demo video follows the order the theme asks for.")
+    x = X0 + i * (pw + gap)
+    phone(s, f, x, y0, h, ratio=R)
+    if i < 4:  # chevron between phones
+        rect(s, x + pw + gap / 2 - 0.08, y0 + h / 2 - 0.15, 0.16, 0.3, PURPLE, shape=MSO_SHAPE.CHEVRON)
+    rect(s, x - 0.04, 4.8, 0.3, 0.3, PURPLE, shape=MSO_SHAPE.OVAL)
+    text(s, x - 0.04, 4.8, 0.3, 0.3, str(i + 1), size=12, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 0.34, 4.8, pw + gap - 0.3, 0.3, t, size=12.5, bold=True, color=INK, font=HEAD, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x - 0.04, 5.17, pw + gap - 0.14, 0.55, d, size=10.5, color=MUTED)
+text(s, X0, 5.83, XW, 0.25, [[("SAME TASK, OTHER WORDS AND VALUES", {"bold": True, "color": PURPLE, "font": HEAD}),
+     ("   each replayed on the phone to the checkout hand-back (eval, 30 Sep)", {"color": MUTED})]], size=10)
+said = ["Order garlic bread from dominos", "Order two Margherita pizzas from Domino’s", "Order a margherita pizza from Pizza Hut on Zomato"]
+ws = [0.7 + 0.062 * len(t) for t in said]; g = (XW - sum(ws)) / 2; x = X0
+for t, w in zip(said, ws):
+    voice(s, t, x, 6.1, w, h=0.4, size=10.5, dark=False); x += w + g
+rect(s, X0, 6.62, XW, 0.38, TINT, radius=0.1)
+text(s, X0 + 0.2, 6.62, XW - 0.4, 0.38, [[("Demo video (≤ 5 min, one unedited take): ", {"bold": True, "color": PURPLE}),
+     ("teach by voice + taps → exact replay → a paraphrase → a changed value → a question. Link in the README and the form.", {"color": TEXT})]],
+     size=11, anchor=MSO_ANCHOR.MIDDLE)
+notes(s, "Five moments from one Zomato task, captured on the phone on 30 Sep. 1: teaching, the red border and the Teaching pill with Done and Cancel. 2: what it learned, the steps in words with the command's values as slots, and the Veg filter tap marked not needed. 3: a replay by voice, the pill shows step 7 of 11, Tap ADD next to margherita. 4: a command without a restaurant, so it asks at the step that needs one. 5: it stops at the payment page and hands back. Below: three more commands from the 30 Sep evaluation that ran the same task with new values, a quantity, and a restaurant it was never taught on.")
 
 # ================= 6. Tools & tech stack =================
 s = S[5]; drop_body(s)
