@@ -103,6 +103,8 @@ The Python test tools and the presentation generator need `pip install -r requir
 
 **Building it.** We used Claude (Anthropic), through Claude Code, as a coding assistant throughout the project: the Kotlin code, the adb test scripts in `recon/`, the evaluation write-ups, this README and the presentation generator. Every commit it contributed to carries a `Co-Authored-By: Claude` line. Every result in this README was measured on a real phone (Oppo Reno3, Android 12). No other AI tools were used.
 
+The organisers' AI Usage Disclosure Form, filled in and signed, feature by feature: [docs/AI_Disclosure_Form_TIET_Update.pdf](docs/AI_Disclosure_Form_TIET_Update.pdf) ([Word](docs/AI_Disclosure_Form_TIET_Update.docx)).
+
 ## Known limitations
 
 - Needs a Fireworks API key for paraphrases, pop-up handling, quantity/address changes and questions; exact and template commands work offline.
