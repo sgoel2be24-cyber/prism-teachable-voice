@@ -100,7 +100,7 @@ class Executor(private val svc: TvaAccessibilityService) {
     private fun endSentence(s: String): String = s.trim().let { if (it.isEmpty() || it.last() in ".?!") it else "$it." }
 
     private fun stepText(st: JSONObject, c: Ctx): String {
-        val intent = st.optString("intent")
+        val intent = Brain.safeIntent(st.optString("intent"))
         val base = Generaliser.describe(st, c.slots)
         return if (intent.isNotBlank()) "${fill(intent, c.slots)} ($base)" else base
     }
@@ -260,7 +260,7 @@ class Executor(private val svc: TvaAccessibilityService) {
                 "success" -> "Done: $done. Please review it and complete the payment yourself."
                 "handover" -> when (reason) {
                     "payment" -> "Done: $done. I've stopped at the payment page. Your turn."
-                    "checkout" -> "Done: $done. I've stopped before checkout; paying is up to you."
+                    "checkout" -> "Done: $done. I've stopped at checkout, before paying. Your turn."
                     else -> "I've stopped at $reason. Your turn."
                 }
                 "stopped" -> "Stopped."

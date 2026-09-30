@@ -206,7 +206,7 @@ class MainActivity : Activity() {
         val sb = StringBuilder()
         for (i in 0 until steps.length()) {
             val st = steps.getJSONObject(i)
-            val line = st.optString("intent").ifEmpty { Generaliser.describe(st, ex) }
+            val line = com.prism.tva.llm.Brain.safeIntent(st.optString("intent")).ifEmpty { Generaliser.describe(st, ex) }
             sb.append("${i + 1}. $line").append(if (st.optBoolean("noise")) "  (ignored: not needed)" else "").append('\n')
         }
         val goals = r.optJSONArray("goals")

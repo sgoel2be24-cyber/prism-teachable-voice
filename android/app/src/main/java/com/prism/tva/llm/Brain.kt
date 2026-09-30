@@ -207,6 +207,7 @@ Return JSON only:
 Guidance:
 - Mark a step noise ONLY if the task works without it: a mis-tap that was immediately undone, a tap on something unrelated to the command (e.g. opening another dish's photo after the requested item was added), or dismissing a pop-up (pop-ups are handled automatically at run time).
 - Never mark as noise a step that moves the task forward: one that opens the next screen the demo continues on (compare "screen" with "next_step_screen"), opens a sheet or options for the requested item, or confirms it. Two taps that look alike (a search suggestion, then the restaurant in the results) are usually both needed. Opening the cart or bag at the end, or going on towards checkout/payment ("Continue", "View cart", "Proceed"), is part of the task.
+- The assistant never pays or places an order, so no step does: a step that opens the cart, checkout or payment page is named for that ("Go to the cart", "Go to payment"), never "Place order", "Finalize order", "Confirm order" or "Checkout".
 - Add a "quantity" goal when the task adds an item to a cart (default "1"); place it before the step that confirms adding the item (e.g. "Add item"), or -1 if there is none.
 - Add an "address" goal for food delivery (default ""); place it at -1 (in the cart, make sure the delivery address is {address}).
 - Do not invent other goals."""
@@ -234,6 +235,15 @@ Guidance:
         return Fireworks.json(REFINE_SYS, user, "refine", effort = "medium", maxTokens = 3500, timeoutMs = 45000)
             ?: Fireworks.json(REFINE_SYS, user, "refine-retry", effort = "low", maxTokens = 3000, timeoutMs = 30000)
     }
+
+    private val ORDERISH = Regex("\\b(finali[sz]e|place|confirm|complete|submit)\\s+(the\\s+|your\\s+|my\\s+)?order\\b|^\\s*check\\s?out\\b", RegexOption.IGNORE_CASE)
+
+    /**
+     * A step name that reads as if the assistant places the order ("Finalize order") while the step
+     * only opens the cart or payment page. Shown on screen during a run, so it must not suggest
+     * paying: it becomes "Go to payment".
+     */
+    fun safeIntent(intent: String): String = if (ORDERISH.containsMatchIn(intent)) "Go to payment" else intent
 
     /** The model writes intents with either the old or the new slot names; make them all the new ones. */
     private fun renamed(text: String, rename: Map<String, String>): String {
@@ -276,7 +286,7 @@ Guidance:
                 val i = o.optInt("i", -1)
                 if (i !in 0 until steps.length()) continue
                 val s = steps.getJSONObject(i)
-                o.optString("intent").takeIf { it.isNotBlank() }?.let { s.put("intent", renamed(it, rename)) }
+                o.optString("intent").takeIf { it.isNotBlank() }?.let { s.put("intent", safeIntent(renamed(it, rename))) }
                 if (o.optBoolean("noise") && s.optString("kind") != "launch") {
                     // Guard rails on the model: a step carrying the user's value, or one that led to
                     // the app screen the demo continued on, is part of the task.
