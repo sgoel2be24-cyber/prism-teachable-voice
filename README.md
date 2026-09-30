@@ -40,6 +40,9 @@ Details: [docs/architecture.md](docs/architecture.md) · recon of the target app
 ## Try it
 
 1. Install the APK and open **Teachable Voice**. Allow the microphone.
+   - **If the install is blocked** ("Blocked by Play Protect", "App not installed"): in India, Google Play Protect blocks apps that use an accessibility service when they are installed from a browser, a chat app or a file manager. Either install over USB with `adb install TeachableVoice-1.0.apk` (USB debugging on), or turn off **Play Store → profile → Play Protect → ⚙ → Scan apps with Play Protect**, install, and turn it back on.
+   - Samsung phones: if **Settings → Security and privacy → Auto Blocker** is on, it blocks every app from outside the store; turn it off to install.
+   - If a download says the file "might be harmful", choose **Download anyway**.
 2. Turn on the assistant: **Settings → Accessibility → Teachable Voice assistant**.
    - Android 13 and later: if the switch is greyed out, open **Settings → Apps → Teachable Voice → ⋮ → Allow restricted settings**, then try again.
    - Oppo/ColorOS, Xiaomi, Vivo: allow the app to run in the background (battery settings), or the system may stop the assistant.

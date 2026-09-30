@@ -189,9 +189,32 @@ class TvaAccessibilityService : AccessibilityService() {
         val lm = if (recipes.isNotEmpty() && Fireworks.available) Brain.matchCommand(u, recipes) else null
         if (lm?.statusQuery == true) return done("status", how = "llm")
         val recipe = lm?.flowId?.let { id -> recipes.firstOrNull { it.optString("id") == id } }
-        if (lm == null && recipes.isNotEmpty() && Fireworks.available) return done("unreachable", how = "llm-timeout")
+        if (lm == null && recipes.isNotEmpty() && Fireworks.available) {
+            // The model didn't answer. A command sharing no word with anything taught ("book a cab to
+            // the airport") is still plainly not learned; only a possible paraphrase needs the model.
+            val taught = recipes.flatMap { Text.tokens(it.optString("command")) + Text.tokens(it.optString("appLabel")) }
+                .filter { it.length >= 3 }.toSet()
+            val shares = Text.tokens(u).any { w -> w.length >= 3 && taught.any { it == w || (w.length >= 4 && (it.startsWith(w) || w.startsWith(it))) } }
+            return if (shares) done("unreachable", how = "llm-timeout") else done("none", how = "no-shared-words")
+        }
         if (recipe == null || lm.confidence < 0.5) return done("none", how = if (lm == null) "no-llm" else "llm")
         val slots = HashMap(lm.slots)
+        // "Order a pizza" names no particular pizza: a value that is only a generic word is missing,
+        // so it is asked for instead of taking whichever pizza is listed first.
+        val generic = setOf("pizza", "pizzas", "burger", "burgers", "food", "something", "anything", "item", "items",
+            "dish", "meal", "one", "it", "thing", "product", "stuff", "kuch", "khana")
+        val missing = ArrayList(lm.missing)
+        for ((k, v) in slots.entries.toList()) {
+            if (k in setOf("quantity", "address")) continue
+            val words = Text.tokens(v).filter { it !in setOf("a", "an", "some", "the", "any") }
+            val example = recipe.optJSONArray("slots")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }
+                .firstOrNull { it.optString("name") == k }?.optString("example") }.orEmpty()
+            if (words.isNotEmpty() && words.all { it in generic } && Text.tokens(example).any { it !in generic }) {
+                Dbg.log("MATCH value \"$v\" for $k names nothing in particular; asking instead")
+                slots.remove(k)
+                if (k !in missing) missing.add(k)
+            }
+        }
         // Optional goal slots (quantity, address) fall back to what was demonstrated.
         recipe.optJSONArray("slots")?.let { a ->
             for (i in 0 until a.length()) {
@@ -203,16 +226,25 @@ class TvaAccessibilityService : AccessibilityService() {
             Text.norm(lm.otherApp) == Text.norm(recipe.optString("appLabel")) ||
             Text.fuzzyContains(recipe.optString("appLabel"), lm.otherApp)
         var other = if (sameApp) null else findApp(lm.otherApp!!)?.takeIf { it != recipe.optString("app") }
+        if (other == null && !sameApp) {
+            // The user named another app ("… in Swiggy") that isn't installed: running the flow in the
+            // taught app instead would do something they didn't ask for. Only when the name follows
+            // "on/in/using/via" and isn't one of the values (a restaurant is not an app).
+            val named = Text.norm(lm.otherApp!!)
+            val inWords = named.length >= 3 && Regex("\\b(on|in|using|via|through) ${Regex.escape(named)}\\b").containsMatchIn(Text.norm(u))
+            val isValue = slots.values.map { Text.norm(it) }.filter { it.length >= 3 }.any { it.contains(named) || named.contains(it) }
+            if (inWords && !isValue) return done("noapp", recipe, slots, "llm conf=${lm.confidence}", lm.otherApp, missing)
+        }
         // The command names the app outright ("… on myntra …") but the model said the taught one:
         // believe the words.
         if (other == null) {
-            Regex("\\bon ([a-z][a-z0-9]*(?: [a-z0-9]+)?)\\b").findAll(Text.norm(u)).map { it.groupValues[1] }
+            Regex("\\b(?:on|in|using|via) ([a-z][a-z0-9]*(?: [a-z0-9]+)?)\\b").findAll(Text.norm(u)).map { it.groupValues[1] }
                 .flatMap { sequenceOf(it, it.substringBefore(' ')) }.distinct()
                 .filter { it.length >= 4 }
                 .firstNotNullOfOrNull { name -> findApp(name, exact = true)?.takeIf { it != recipe.optString("app") } }
                 ?.let { Dbg.log("MATCH app named in the command: $it"); other = it }
         }
-        return done("run", recipe, slots, "llm conf=${lm.confidence}", other, lm.missing)
+        return done("run", recipe, slots, "llm conf=${lm.confidence}", other, missing)
     }
 
     @Volatile private var lastUtterance = ""
@@ -225,6 +257,13 @@ class TvaAccessibilityService : AccessibilityService() {
             if (u.isEmpty()) return@launch
             // A question is pending mid-run: whatever is typed or said in the app answers it.
             if (asker.waiting) {
+                // "Stop" / "cancel" is not an answer (it would be typed into the app as a value).
+                if (Regex("^(stop|cancel|never ?mind|forget it|leave it|rehne do|ruko|band karo)\\b").containsMatchIn(Text.norm(u))) {
+                    Dbg.log("UTTERANCE stops the run during a question: \"$u\"")
+                    asker.answer(null)
+                    executor.cancel()
+                    return@launch
+                }
                 Dbg.log("UTTERANCE answers the pending question: \"$u\"")
                 asker.answer(u)
                 return@launch
@@ -243,6 +282,12 @@ class TvaAccessibilityService : AccessibilityService() {
                 "run" -> {
                     Dbg.log("MATCH \"$u\" -> ${r.recipe!!.optString("id")} (${r.how}) ${r.slots} missing=${r.missing} app=${r.otherApp ?: "-"}")
                     executor.start(r.recipe, r.slots, u, r.otherApp)
+                }
+                "noapp" -> {
+                    Dbg.log("MATCH_NOAPP \"$u\" -> ${r.recipe?.optString("id")} app=${r.otherApp}")
+                    val msg = "I can't find ${r.otherApp} on this phone. I learned this task in ${r.recipe?.optString("appLabel")}; say it again with that app if you want it there."
+                    say(msg)
+                    hud.show(msg, listOf("OK" to { hud.hide() }), autoHideMs = 10000)
                 }
                 "unreachable" -> {
                     // Don't offer to teach something it may already know: the model just didn't answer.
@@ -280,13 +325,16 @@ class TvaAccessibilityService : AccessibilityService() {
         val at = if (stopIdx >= 0) "at step ${stopIdx + 1} of $steps" + (if (stepName.isNotEmpty()) " ($stepName)" else "") else ""
         val msg = when (last.optString("outcome")) {
             "success" -> "Yes. Your last run, $what, at $time, completed all $steps steps."
-            "handover" -> when (reason) {
-                "payment" -> "Yes. Your last run, $what, at $time, reached the payment page and handed over to you. Nothing was paid."
-                "checkout" -> "Yes. Your last run, $what, at $time, reached checkout and handed over to you. Nothing was paid."
+            "handover" -> when {
+                reason == "payment" -> "Yes. Your last run, $what, at $time, reached the payment page and handed over to you. Nothing was paid."
+                reason == "checkout" -> "Yes. Your last run, $what, at $time, reached checkout and handed over to you. Nothing was paid."
+                // Stopped at the demo's own pay button ("Add Payment Method"): that is the end of the task.
+                reason.startsWith(com.prism.tva.core.Guard.spoken("payment")) ->
+                    "Yes. Your last run, $what, at $time, reached the payment step and handed over to you. Nothing was paid."
                 else -> "No. Your last run, $what, at $time, stopped $at: it reached $reason."
             }
-            "stopped" -> "No. Your last run, $what, was stopped by you $at."
-            else -> "No. Your last run, $what, at $time, failed $at: $reason."
+            "stopped" -> "No. Your last run, $what, was stopped by you" + (if (at.isNotEmpty()) " $at." else ".")
+            else -> "No. Your last run, $what, at $time, failed" + (if (at.isNotEmpty()) " $at" else "") + ": $reason."
         }
         say(msg)
         hud.show(msg, listOf("OK" to { hud.hide() }), autoHideMs = 10000)

@@ -11,6 +11,8 @@ object Guard {
         " pay ", " pay now", " place order", " proceed to buy", " proceed to checkout", " proceed to pay",
         " add payment method", " make payment", " confirm order", " confirm and pay", " buy now",
         " complete payment", " slide to pay", " swipe to pay", " pay using", " checkout ",
+        // The same buttons with the app in Hindi.
+        " भुगतान करें", " अभी भुगतान", " भुगतान जोड़ें", " ऑर्डर करें", " ऑर्डर दें", " अभी खरीदें", " चेकआउट",
     )
 
     /**
@@ -28,24 +30,36 @@ object Guard {
     private val CRED_FIELDS = listOf(
         "otp", "one time password", "verification code", "enter code", "password", "passcode", "pin",
         "phone number", "mobile number", "email", "e mail", "username",
+        "ओटीपी", "पासवर्ड", "मोबाइल नंबर", "फ़ोन नंबर", "फोन नंबर",
     )
     private val AUTH_WORDS = listOf(
         "log in", "login", "sign in", "signin", "sign up", "verify", "continue with", "otp", "welcome back",
+        "लॉग इन", "लॉगिन", "साइन इन", "साइन अप", "ओटीपी", "सत्यापित",
     )
 
     /** Phrases that only appear on a signed-out / sign-in screen. */
     private val LOGIN_SCREEN = listOf(
         "choose your account", "use another sign in method", "log in or sign up", "login or signup", "sign in or sign up",
         "enter your mobile number", "enter your phone number", "continue with google", "continue with phone",
+        "लॉग इन करें", "साइन इन करें", "लॉग इन या साइन अप", "अपना मोबाइल नंबर दर्ज करें",
     )
 
     private fun padded(s: String) = " " + Text.norm(s) + " "
+
+    // The phrases in the same normal form as the screen text (Hindi nukta letters, case), keeping the
+    // word-boundary spaces written into them.
+    private fun np(x: String) = (if (x.startsWith(" ")) " " else "") + Text.norm(x) + (if (x.endsWith(" ")) " " else "")
+    private val PAY_A by lazy { PAY_ACTIONS.map(::np) }
+    private val PAY_S by lazy { PAY_SCREEN.map(Text::norm) }
+    private val CRED by lazy { CRED_FIELDS.map(Text::norm) }
+    private val AUTH by lazy { AUTH_WORDS.map(Text::norm) }
+    private val LOGIN by lazy { LOGIN_SCREEN.map(Text::norm) }
 
     /** Non-null reason if tapping an element with these labels could start a payment. */
     fun actionBlock(labels: Collection<String>): String? {
         for (l in labels) {
             val n = padded(l)
-            if (PAY_ACTIONS.any { n.contains(it) }) return "payment"
+            if (PAY_A.any { n.contains(it) }) return "payment"
         }
         return null
     }
@@ -57,16 +71,16 @@ object Guard {
         // The app's own name for the screen (e.g. Zomato's PaymentsOptionsActivityV5).
         if (Regex("payment", RegexOption.IGNORE_CASE).containsMatchIn(snap.activity ?: "") && snap.appPkg == pkg) return "payment"
         val screenText = padded(nodes.joinToString(" ") { it.label })
-        val payHits = PAY_SCREEN.count { screenText.contains(" $it ") }
+        val payHits = PAY_S.count { screenText.contains(" $it ") }
         if (payHits >= 2) return "payment"
         val credField = nodes.any { n ->
-            n.editable && CRED_FIELDS.any { k -> padded(n.hint ?: "").contains(" $k ") || padded(n.label).contains(" $k ") }
+            n.editable && CRED.any { k -> padded(n.hint ?: "").contains(" $k ") || padded(n.label).contains(" $k ") }
         }
-        if (credField && AUTH_WORDS.any { screenText.contains(" $it ") }) return "login"
+        if (credField && AUTH.any { screenText.contains(" $it ") }) return "login"
         // Signed out: a login screen with no field yet (Zomato's "Choose your account · Use another
         // sign-in method", a "Continue with Google" page). Tapping the account would sign in. (Not the
         // activity name: Zomato's splash screen is also com.application.zomato.login.ZomatoActivity.)
-        if (LOGIN_SCREEN.any { screenText.contains(" $it ") }) return "login"
+        if (LOGIN.any { screenText.contains(" $it ") }) return "login"
         return null
     }
 

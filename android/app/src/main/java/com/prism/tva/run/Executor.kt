@@ -69,6 +69,7 @@ class Executor(private val svc: TvaAccessibilityService) {
         val tapCounts: HashMap<String, Int> = HashMap(), // how often the LLM picked each action this run
         var alreadyHad: Boolean = false, // the last add step found the item already in the cart
         var next: JSONObject? = null, // the step after the current one, to recognise its screen
+        var prev: JSONObject? = null, // the step before the current one
         var cartBefore: Int? = null, // cart count just before the last "Add to cart" press
         var addStep: Boolean = false, // the current step adds something to the cart/bag
         var lastTap: String = "", // what the model tapped last (to stop it unselecting a size)
@@ -88,8 +89,11 @@ class Executor(private val svc: TvaAccessibilityService) {
 
     private fun fill(template: String, slots: Map<String, String>): String {
         var s = template
-        slots.forEach { (k, v) -> s = s.replace("{$k}", v) }
-        return s.replace(Regex("\\{[a-z0-9_]+\\}"), "").replace(Regex("\\s+"), " ").trim()
+        slots.forEach { (k, v) -> if (v.isNotBlank()) s = s.replace("{$k}", v) }
+        // An unknown value takes its little word with it: "Order pizza from {restaurant} on Zomato"
+        // reads "Order pizza on Zomato", not "… from on Zomato".
+        return s.replace(Regex("(?i)(\\b(from|on|in|at|to|for|with|of|a|an|the)\\s+)?\\{[a-z0-9_]+\\}"), "")
+            .replace(Regex("\\s+"), " ").trim()
     }
 
     /** "Which size?" stays as it is; "no network" becomes "no network." */
@@ -207,6 +211,7 @@ class Executor(private val svc: TvaAccessibilityService) {
                 svc.hud.update("${i + 1}/${steps.length()} · $short")
                 val s0 = System.currentTimeMillis()
                 c.next = (i + 1 until steps.length()).map { steps.getJSONObject(it) }.firstOrNull { !it.optBoolean("noise") }
+                c.prev = (i - 1 downTo 0).map { steps.getJSONObject(it) }.firstOrNull { !it.optBoolean("noise") }
                 val r = runStep(st, c)
                 record(i, desc, r, System.currentTimeMillis() - s0)
                 if (!r.ok) { outcome = r.outcome; reason = r.note; stoppedAt = i; break }
@@ -282,7 +287,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         c.asks++
         val arr = c.recipe.optJSONArray("slots")
         val q = arr?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("name") == slot }?.optString("question") }
-        return svc.asker.ask(q?.takeIf { it.isNotBlank() } ?: "Which $slot should I use?")
+        // Recipes learned before the wording fix may say "should you"; the assistant is the one acting.
+        val spoken = q?.takeIf { it.isNotBlank() }?.replace(Regex("\\b(should|shall|can|could) you\\b", RegexOption.IGNORE_CASE)) { "${it.groupValues[1]} I" }
+        return svc.asker.ask(spoken ?: "Which $slot should I use?")
     }
 
     private suspend fun runStep(st: JSONObject, c: Ctx): StepResult =
@@ -371,10 +378,18 @@ class Executor(private val svc: TvaAccessibilityService) {
         if (c.addStep) st.optString("anchorSlot").takeIf { it.isNotEmpty() }?.let { c.slots[it] }
             ?.takeIf { it.isNotBlank() }?.let { c.item = it }
         var wrongSheets = 0
+        // The demo's own button for this step was a payment one ("Add Payment Method", "Place order"):
+        // stop here, whatever language the app shows now.
+        st.optJSONObject("target")?.let { t ->
+            val demo = listOf(t.optString("leafLabel"), t.optString("label")).filter { it.isNotBlank() }
+            Guard.actionBlock(demo)?.let { r -> return StepResult(false, "handover", "guard", "${Guard.spoken(r)} (\"${demo.first()}\")") }
+        }
+        suggestionAsSearch(st, c)?.let { return it }
         while (true) {
             svc.settle(400, 2500) // shopping pages never go fully quiet (autoplaying carousels)
             val snap = svc.snapshot()
             guardScreen(snap, c.app)?.let { return it }
+            if (!verifying) scriptMismatch(snap, st, c.app)?.let { return it }
             if (startSig == null) startSig = sig(snap, c.app)
             if (verifying) {
                 // Let a loading screen finish before judging the result.
@@ -431,7 +446,20 @@ class Executor(private val svc: TvaAccessibilityService) {
             }
             // Sponsored results are skipped while we can still scroll past them (Amazon's earbuds
             // page opens with 5+ screens of ads).
-            val m = Resolver.resolve(st, c.slots, snap, c.app, skipAds = scrolls < 10)
+            var m = Resolver.resolve(st, c.slots, snap, c.app, skipAds = scrolls < 10)
+            // A pop-up window (a promo, a dialog) sits over the screen the button is on. An accessibility
+            // click would reach the button underneath and carry on with the pop-up still open: let the
+            // model deal with the pop-up first, and don't scroll the screen under it.
+            if (m != null) {
+                val top = snap.windows.indexOfFirst { it.isApp && it.pkg == c.app }
+                val tb = snap.windows.getOrNull(top)?.bounds
+                if (top >= 0 && m.node.window != top && tb != null &&
+                    tb.width().toLong() * tb.height() >= snap.screenW.toLong() * snap.screenH * 15 / 100) {
+                    Dbg.log("POPUP window over the screen; not tapping \"${Brain.display(snap, m.node, 40)}\" underneath")
+                    m = null
+                    preScrolls = 10
+                }
+            }
             if (m != null) {
                 guardTap(snap, m.node)?.let { return it }
                 val long = st.optString("kind") == "longpress"
@@ -785,6 +813,15 @@ class Executor(private val svc: TvaAccessibilityService) {
                     c.history.add("scroll down → ${if (e == "nothing changed") "nothing moved (this screen does not scroll)" else e}")
                     return StepResult(true, "success", "llm", "scrolled instead of asking") to false
                 }
+                // "Are the search results displayed now?" — the user can't answer better than the screen
+                // can. Give a slow page a moment and look again instead.
+                if (Regex("\\b(displayed|showing|shown|loaded|loading|appear(ed|ing)?|on (the|your) screen|is the (page|screen)|what (do|can) you see)\\b",
+                        RegexOption.IGNORE_CASE).containsMatchIn(d.question ?: "")) {
+                    Dbg.log("LLM ask about the screen treated as a wait: ${d.question}")
+                    delay(1500)
+                    c.history.add("asked the user \"${d.question}\" — not asked: the elements list is the screen. Decide from it (wait, scroll or go on)")
+                    return StepResult(true, "success", "llm", "waited instead of asking about the screen") to false
+                }
                 if (c.asks >= 2) return StepResult(false, "asked", "llm", d.question ?: d.reason) to true
                 c.asks++
                 val ans = svc.asker.ask(d.question ?: "I'm stuck here. What should I do?")
@@ -878,6 +915,54 @@ class Executor(private val svc: TvaAccessibilityService) {
             if (!kept) return false
         }
         return true
+    }
+
+    /**
+     * The demo typed the start of a word and tapped the suggestion that was exactly the value
+     * ("wirel" -> "wireless earbuds"). Now the whole value is typed; if no suggestion reads it word
+     * for word, the search key does what that tap did (a near suggestion would search for
+     * something else).
+     */
+    private suspend fun suggestionAsSearch(st: JSONObject, c: Ctx): StepResult? {
+        val slot = st.optString("textSlot").ifEmpty { return null }
+        val prev = c.prev ?: return null
+        if (prev.optString("kind") != "type" || prev.optString("textSlot") != slot || prev.optBoolean("submit")) return null
+        val t = st.optJSONObject("target") ?: return null
+        if (t.optBoolean("editable")) return null
+        val example = c.recipe.optJSONArray("slots")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } }
+            ?.firstOrNull { it.optString("name") == slot }?.optString("example").orEmpty()
+        val demo = t.optString("leafLabel").ifEmpty { t.optString("label") }
+        if (example.isBlank() || Text.norm(demo) != Text.norm(example)) return null
+        val value = c.slots[slot].orEmpty().ifBlank { return null }
+        svc.settle(400, 2500)
+        val snap = svc.snapshot()
+        val nodes = snap.appNodes(c.app)
+        if (nodes.any { it.visible && !it.editable && Text.norm(it.label) == Text.norm(value) }) return null
+        val field = nodes.firstOrNull { it.editable && it.focused } ?: return null
+        if (!Actions.imeEnter(field)) return null
+        Dbg.log("SUGGESTION none reads \"$value\"; pressed the search key instead")
+        svc.settle(500, 4000)
+        return StepResult(true, "success", "search-key", "no suggestion reads \"$value\", so I pressed search")
+    }
+
+    private val DEVANAGARI = Regex("[\\u0900-\\u097F]")
+
+    /**
+     * The app now shows Hindi where the demo showed English (the judge switched the language): the
+     * learned buttons can't be recognised, and guessing could tap the wrong thing. Say so at once.
+     */
+    private fun scriptMismatch(snap: Snapshot, st: JSONObject, app: String): StepResult? {
+        val t = st.optJSONObject("target") ?: return null
+        val demo = t.optString("leafLabel").ifEmpty { t.optString("label") }
+        if (demo.isBlank() || DEVANAGARI.containsMatchIn(demo) || demo.count { it.isLetter() } < 3) return null
+        val labels = snap.appNodes(app).map { it.label }.filter { l -> l.count { it.isLetter() } >= 2 }
+        if (labels.size < 6) return null
+        val hindi = labels.count { DEVANAGARI.containsMatchIn(it) }
+        if (hindi * 10 < labels.size * 4) return null // under 40 % of the screen's text
+        Dbg.log("SCRIPT_MISMATCH $hindi of ${labels.size} labels are Hindi; the demo's button was \"$demo\"")
+        return StepResult(false, "failed", "language",
+            "the app is showing Hindi now, but I learned this task in English, so I can't tell its buttons apart. " +
+                "Switch the app back to English, or teach me the task again in Hindi")
     }
 
     private val GENERIC_ITEM_WORDS = setOf("pizza", "pizzas", "burger", "burgers", "meal", "meals", "combo", "large",

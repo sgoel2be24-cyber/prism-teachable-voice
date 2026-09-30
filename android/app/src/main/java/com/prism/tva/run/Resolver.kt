@@ -29,7 +29,10 @@ object Resolver {
         // nothing matches yet and the caller scrolls on.
         // Only for a generic pick. When the user named the thing ("Domino's", "ADD next to Margherita"),
         // an "Ad" tag on it doesn't make it the wrong one (Zomato marks Domino's itself as an ad).
-        val named = step.optString("textSlot").isNotEmpty() || step.optString("anchorSlot").isNotEmpty()
+        // A soft anchor (the searched words happened to be in the first result's title) is still a
+        // generic "first result" pick, so adverts are skipped there too.
+        val named = step.optString("textSlot").isNotEmpty() ||
+            (step.optString("anchorSlot").isNotEmpty() && !step.optBoolean("anchorSoft"))
         if (skipAds && !named && ranked.isNotEmpty()) {
             val key = { m: Match -> Text.stable(m.node.label.ifEmpty { snap.labelsIn(m.node, 1).firstOrNull() ?: "" }) }
             val k0 = key(ranked[0])
@@ -166,12 +169,17 @@ object Resolver {
             // Label.
             val labels = (listOf(n.label, a.label) + snap.labelsIn(a, 8)).filter { it.isNotEmpty() }.distinct()
             if (slotValue.isNotEmpty()) {
+                var hit = true
                 when {
                     labels.any { Text.norm(it) == Text.norm(slotValue) } -> { s += 5.0; why.append("slot= ") }
                     labels.any { Text.norm(it).startsWith(Text.norm(slotValue)) } -> { s += 4.5; why.append("slot^ ") }
                     labels.any { Text.fuzzyContains(it, slotValue) } -> { s += 4.0; why.append("slot~ ") }
-                    else -> s -= miss
+                    else -> { s -= miss; hit = false }
                 }
+                // The value just typed also shows in the search field and the bar around it; tapping
+                // that bar is not tapping the suggestion "wireless earbuds".
+                if (hit && !wantEditable && !a.editable &&
+                    snap.subtree(a).any { it.editable && Text.fuzzyContains(it.label, slotValue) }) { s -= 3.0; why.append("field ") }
             } else if (literal.isNotEmpty() && !wantEditable) {
                 val nl = Text.norm(literal)
                 val sl = Text.stable(literal)
@@ -198,9 +206,17 @@ object Resolver {
                     // Pizza Hut's plain "Margherita" counts for "margherita pizza" (and beats its
                     // "Margherita Ultimate Cheese Pizza", which merely contains both words).
                     val v = Text.norm(anchorSlotValue)
+                    // Word by word, so a misheard "margarita pizza" still names "Margherita Pizza".
+                    fun sameWords(a: List<String>, b: List<String>) = a.size == b.size && a.zip(b).all { (x, y) ->
+                        x == y || (x.length >= 5 && y.length >= 5 && Text.sim(x, y) >= 0.75)
+                    }
                     fun exact(label: String): Boolean {
                         val l = Text.norm(label)
-                        return l.isNotEmpty() && (l == v || l.startsWith("$v ") || (l.length >= 4 && v.startsWith("$l ")) || Text.norm(label + "s") == v)
+                        if (l.isEmpty()) return false
+                        if (l == v || l.startsWith("$v ") || (l.length >= 4 && v.startsWith("$l ")) || Text.norm(label + "s") == v) return true
+                        val lw = l.split(' '); val vw = v.split(' ')
+                        return sameWords(lw, vw) || (lw.size > vw.size && sameWords(lw.take(vw.size), vw)) ||
+                            (vw.size > lw.size && lw.first().length >= 4 && sameWords(vw.take(lw.size), lw))
                     }
                     if (row.any { Text.fuzzyContains(it, anchorSlotValue) || exact(it) }) {
                         s += if (soft) 2.0 else 4.0; why.append("anchor ")

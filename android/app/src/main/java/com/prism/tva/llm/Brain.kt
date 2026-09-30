@@ -30,7 +30,7 @@ Rules:
 - Fill "slots" only with values the user actually said. Write numbers as digits ("two" -> "2"). Keep names as the user said them.
 - If the user asks for something the flow has no slot for (a quantity, a delivery address like "to Work", a size), still put it in "slots" under a short lowercase name ("quantity", "address", "size").
 - "missing": required slots of the chosen flow that the user did not give and that cannot be inferred.
-- If the user names a different app than the flow's app but the same kind of task, still choose the flow and put that app's name in "app".
+- If the user names a different app than the flow's app but the same kind of task, still choose the flow and put that app's name in "app". Example: "search for a wallet on Myntra and add the first result to my bag" -> the flow that searches Amazon and adds the first result to the cart, with the product slot = "wallet" and app = "Myntra" ("bag" and "cart" mean the same thing). Only a different kind of task (booking a cab when only shopping was taught) gets null.
 - "status_query": true when the user asks about a previous run ("did it work?", "did the last run succeed?").
 - If no taught flow fits, "flow" must be null. Never guess a flow for an unrelated request.
 Reply with JSON only: {"flow": id|null, "slots": {name: value}, "missing": [names], "app": name|null, "confidence": 0..1, "status_query": true|false}"""
@@ -257,8 +257,10 @@ Guidance:
             val name = rn(old)
             // The model may key meanings/questions by either name.
             fun pick(o: JSONObject?) = o?.optString(name).orEmpty().ifEmpty { o?.optString(old).orEmpty() }
+            // The assistant asks, so it speaks as "I" ("Which restaurant should I order from?").
+            val q = pick(questions).replace(Regex("\\b(should|shall|can|could) you\\b", RegexOption.IGNORE_CASE)) { "${it.groupValues[1]} I" }
             newSlots.put(JSONObject().put("name", name).put("example", s.optString("example")).put("required", true)
-                .put("meaning", pick(meanings)).put("question", pick(questions)))
+                .put("meaning", pick(meanings)).put("question", q))
         }
         var template = recipe.optString("template")
         rename.forEach { (a, b) -> template = template.replace("{$a}", "{$b}") }

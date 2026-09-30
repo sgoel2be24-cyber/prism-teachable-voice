@@ -31,16 +31,31 @@ class Asker(private val svc: TvaAccessibilityService) {
         Dbg.log("ASK $question")
         svc.hud.show("❓ $question", listOf("Skip" to { answer(null) }))
         svc.speaker.say(question) { main.post { listen(retries = 6) } }
-        val r = withTimeoutOrNull(timeoutMs) { d.await() }
-        pending = null
-        main.post { stopListening() }
+        // Cleared even when the run is stopped mid-question, or the next command would be taken as
+        // this question's answer.
+        val r = try {
+            withTimeoutOrNull(timeoutMs) { d.await() }
+        } finally {
+            if (pending === d) pending = null
+            d.cancel()
+            main.post { stopListening() }
+        }
         Dbg.log("ANSWER ${r ?: "(none)"}")
         return r?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     fun answer(text: String?) {
+        // "Stop" / "cancel" said instead of an answer ends the run; it isn't a value to type.
+        if (text != null && STOP.containsMatchIn(com.prism.tva.core.Text.norm(text))) {
+            Dbg.log("ANSWER is a stop: \"$text\"")
+            pending?.complete(null)
+            svc.executor.cancel()
+            return
+        }
         pending?.complete(text)
     }
+
+    private val STOP = Regex("^(stop|cancel|never ?mind|forget it|leave it|rehne do|ruko|band karo)\\b")
 
     private fun listen(retries: Int) {
         if (!waiting) return

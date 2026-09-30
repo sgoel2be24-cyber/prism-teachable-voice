@@ -22,6 +22,8 @@ object Generaliser {
         "i", "want", "would", "like", "get", "order", "buy", "add", "search", "find", "open", "show", "cart",
         "app", "then", "it", "into", "first", "result", "results", "some", "can", "you", "via", "using", "go",
         "is", "this", "that", "up", "let", "lets", "now", "just",
+        // Placeholder nouns ("add an item to Zomato") name no value, so they never become a slot.
+        "item", "items", "thing", "things", "something", "anything", "product", "products", "stuff",
     )
     private val SYSTEM_PKGS = setOf("com.android.systemui")
 
@@ -50,6 +52,14 @@ object Generaliser {
             val pkg = s.optString("pkg")
             when (s.optString("kind")) {
                 "tap", "longpress", "type" -> {
+                    // The 3-button navigation bar's Back (Samsung's default) is a tap in System UI, not a
+                    // gesture: inside the app it is a back step, not noise.
+                    val navBack = pkg in SYSTEM_PKGS && s.optString("kind") == "tap" &&
+                        Text.norm(s.optJSONObject("target")?.optString("leafLabel").orEmpty().ifEmpty { s.optJSONObject("target")?.optString("label").orEmpty() }) == "back"
+                    if (navBack) {
+                        if (seenApp && lastPkg == app) kept.add(JSONObject().put("kind", "back"))
+                        continue
+                    }
                     when {
                         pkg == app -> {
                             seenApp = true
@@ -103,9 +113,21 @@ object Generaliser {
             when (kind) {
                 "type" -> {
                     val typed = s.optString("text")
-                    val best = spans.filter { Text.fuzzyContains(typed, it.text) || Text.fuzzyContains(it.text, typed) }
-                        .maxByOrNull { Text.sim(it.text, typed) }
-                    if (best != null && Text.sim(best.text, typed) >= 0.6 && !s.optBoolean("secret")) {
+                    val t = Text.norm(typed)
+                    // People type the start of a name and tap a suggestion ("domi" → "Domino's Pizza"),
+                    // or more than the name ("domino's pizza"). Both still mean the command's "dominos".
+                    // A span across "from"/"on" ("margherita pizza from dominos") is never one value.
+                    fun plain(sp: Span) = cmdTokens.subList(sp.start, sp.end).none { it in STOP }
+                    fun score(sp: Span): Double = when {
+                        sp.text == t -> 4.0
+                        t.length >= 3 && plain(sp) && sp.text.startsWith(t) -> 3.0 + (sp.end - sp.start) * 0.1
+                        plain(sp) && t.startsWith(sp.text + " ") -> 2.0 + (sp.end - sp.start) * 0.1
+                        else -> Text.sim(sp.text, typed)
+                    }
+                    val best = spans.filter {
+                        Text.fuzzyContains(typed, it.text) || Text.fuzzyContains(it.text, typed) || (t.length >= 3 && it.text.startsWith(t))
+                    }.maxByOrNull { score(it) }
+                    if (best != null && (score(best) >= 2.0 || Text.sim(best.text, typed) >= 0.6) && !s.optBoolean("secret")) {
                         out.put("textSlot", slotFor(best, "query").name)
                     }
                 }
@@ -115,9 +137,12 @@ object Generaliser {
                     val row = t.optJSONArray("rowLabels").strings()
                     val existing = slots.firstOrNull { sl -> own.any { Text.fuzzyContains(it, sl.span.text) } }
                     // Longest command phrase the element shows: "margherita pizza", not just "pizza".
+                    // Among equally long ones, the one closest to the label: a "Domino's Pizza" tile
+                    // is "dominos", not "pizza".
+                    fun closeness(sp: Span) = own.filter { it.isNotBlank() }.maxOfOrNull { Text.sim(sp.text, it) } ?: 0.0
                     val fresh = existing ?: spans.filter { !overlapsSlot(it) && it.text.length >= 3 }
-                        .sortedByDescending { it.end - it.start }
-                        .firstOrNull { sp -> own.any { Text.fuzzyContains(it, sp.text) } }
+                        .filter { sp -> own.any { Text.fuzzyContains(it, sp.text) } }
+                        .maxWithOrNull(compareBy<Span>({ it.end - it.start }, { closeness(it) }))
                         ?.let { slotFor(it, "choice") }
                     if (fresh != null) {
                         out.put("textSlot", fresh.name)
