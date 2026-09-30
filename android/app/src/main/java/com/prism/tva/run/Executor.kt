@@ -257,7 +257,9 @@ class Executor(private val svc: TvaAccessibilityService) {
         withContext(NonCancellable) {
             svc.store.appendRun(rec)
             val msg = when (outcome) {
-                "success" -> "Done: $done. Please review it and complete the payment yourself."
+                // Only a shopping task has a payment left for the user (not "open the flutter repository").
+                "success" -> if (Regex("\\b(cart|bag|order|buy|basket|checkout)\\b", RegexOption.IGNORE_CASE).containsMatchIn(done))
+                    "Done: $done. Please review it and complete the payment yourself." else "Done: $done."
                 "handover" -> when (reason) {
                     "payment" -> "Done: $done. I've stopped at the payment page. Your turn."
                     "checkout" -> "Done: $done. I've stopped at checkout, before paying. Your turn."
@@ -268,7 +270,11 @@ class Executor(private val svc: TvaAccessibilityService) {
                 else -> "I couldn't finish: ${endSentence(reason)}"
             }
             svc.speaker.say(msg)
-            svc.hud.show(msg, listOf("OK" to { svc.hud.hide() }), autoHideMs = 9000)
+            // "🎤 Next": the next command straight from here, without going back to the app.
+            svc.hud.show(msg, listOf(
+                "🎤 Next" to { svc.speaker.stop(); svc.asker.listenForCommand { svc.handleUtterance(it) } },
+                "OK" to { svc.hud.hide() },
+            ), autoHideMs = 30000)
             Dbg.log("RUN_END $runId $outcome ${System.currentTimeMillis() - t0}ms llm=${c.llmCalls} $reason")
         }
         return rec

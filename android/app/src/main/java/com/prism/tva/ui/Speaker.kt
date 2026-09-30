@@ -36,5 +36,8 @@ class Speaker(ctx: Context) {
         if (tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) callbacks.remove(id)?.invoke()
     }
 
+    /** Stops speaking now (the user is about to talk). */
+    fun stop() { runCatching { tts.stop() } }
+
     fun shutdown() = runCatching { tts.shutdown() }
 }

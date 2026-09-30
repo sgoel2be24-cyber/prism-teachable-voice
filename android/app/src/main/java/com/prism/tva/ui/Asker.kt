@@ -99,6 +99,56 @@ class Asker(private val svc: TvaAccessibilityService) {
         })
     }
 
+    /**
+     * One spoken command from the status pill's "🎤 Next", without going back to the app. What it
+     * hears so far is shown in the pill, so a misheard command can be cancelled before it runs.
+     */
+    fun listenForCommand(onText: (String) -> Unit) {
+        if (svc.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+            !SpeechRecognizer.isRecognitionAvailable(svc)
+        ) {
+            svc.hud.show("Open Teachable Voice to speak a command.", listOf("OK" to { svc.hud.hide() }), autoHideMs = 6000)
+            return
+        }
+        stopListening()
+        val r = SpeechRecognizer.createSpeechRecognizer(svc)
+        recognizer = r
+        fun again() = svc.hud.show("I didn't catch that.",
+            listOf("🎤 Again" to { listenForCommand(onText) }, "OK" to { svc.hud.hide() }), autoHideMs = 10000)
+        svc.hud.show("🎤 Listening… say a command", listOf("Cancel" to { main.post { stopListening() }; svc.hud.hide() }))
+        r.setRecognitionListener(object : RecognitionListener {
+            override fun onResults(results: Bundle?) {
+                val best = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                main.post { stopListening() }
+                if (best.isNullOrBlank()) { again(); return }
+                Dbg.log("COMMAND from the pill: \"$best\"")
+                svc.hud.show("“$best”", autoHideMs = 3000)
+                onText(best)
+            }
+            override fun onError(error: Int) {
+                Dbg.log("COMMAND recognizer error $error")
+                main.post { stopListening() }
+                again()
+            }
+            override fun onReadyForSpeech(params: Bundle?) { svc.hud.update("🎤 Listening… say a command") }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    ?.takeIf { it.isNotBlank() }?.let { svc.hud.update("🎤 “$it…”") }
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        })
+    }
+
     private fun stopListening() {
         recognizer?.let { runCatching { it.cancel(); it.destroy() } }
         recognizer = null
