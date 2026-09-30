@@ -153,6 +153,7 @@ object Resolver {
             if (wantEditable && !a.editable) continue
             val why = StringBuilder()
             var s = 0.0
+            var namedHit = false
 
             // View id. A distinctive id match also forgives a changed label (e.g. a rotating hint).
             var idStrong = false
@@ -233,16 +234,32 @@ object Resolver {
                         s += if (soft) 2.0 else 4.0; why.append("anchor ")
                         if (row.any { exact(it) }) {
                             s += 1.5; why.append("anchor= ")
+                        } else if (!soft) {
+                            // No dish is named exactly that: the one with the fewest other words is
+                            // what was asked for ("garlic bread" -> "Sourdough Garlic Bread" before
+                            // "Korean Corn & Jalapeno Garlic Bread").
+                            val vw = v.split(' ').filter { it.isNotBlank() }
+                            fun same(w: String, x: String) = w == x || (x.length >= 4 && w.startsWith(x)) ||
+                                (x.length >= 5 && w.length >= 5 && Text.sim(w, x) >= 0.75)
+                            // (A section line such as "In Garlic Breads & Dips" names no dish.)
+                            val extra = row.mapNotNull { l ->
+                                val lw = Text.norm(l).split(' ').filter { it.isNotBlank() }
+                                if (lw.isEmpty() || lw.first() == "in" || !vw.all { x -> lw.any { same(it, x) } }) null
+                                else lw.count { w -> vw.none { x -> same(w, x) } }
+                            }.minOrNull()
+                            if (extra != null && extra <= 3) { s += 1.2 - 0.3 * extra; why.append("near$extra ") }
                         }
+                        if (!soft) namedHit = true
                     } else s -= if (soft) 0.5 else 4.0
                 } else {
                     if (row.any { Text.fuzzyContains(it, anchorLiteral) }) { s += 2.0; why.append("anchorLit ") } else s -= 0.5
                 }
             }
 
-            // Position on screen (weak: layouts shift).
+            // Position on screen (weak: layouts shift). Where the demo's dish sat says nothing about
+            // where another named dish sits in the list.
             val d = hypot(a.bounds.exactCenterX() / snap.screenW - rx, a.bounds.exactCenterY() / snap.screenH - ry)
-            s += (1.0 - minOf(1.0, d * 2)) * 1.0
+            s += (1.0 - minOf(1.0, d * 2)) * (if (namedHit) 0.2 else 1.0)
 
             val prev = best[a.idx]
             if (prev == null || s > prev.first) best[a.idx] = s to why.toString().trim()
