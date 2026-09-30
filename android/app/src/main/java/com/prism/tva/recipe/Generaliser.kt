@@ -275,6 +275,9 @@ object Matcher {
             // A value that swallowed an extra request ("dominos and deliver it to work", "2 of them
             // please") means the command says more than the template: let the language model read it.
             if (values.values.any { v -> v.split(' ').size > 4 || Regex("\\b(and|with|to|for|then|deliver|please)\\b").containsMatchIn(v) }) continue
+            // A misheard command ("order of farmhouse piece of from …") leaves filler around the value:
+            // let the language model read what was meant.
+            if (values.values.any { v -> Regex("^(of|the|to)\\s|\\s(of|the|a)$").containsMatchIn(v.trim()) }) continue
             // "two margherita pizzas" carries a quantity the template has no place for.
             if (values.filterKeys { it != "quantity" }.values.any { v -> QTY_START.containsMatchIn(v) }) continue
             return Match(r, values, "template")

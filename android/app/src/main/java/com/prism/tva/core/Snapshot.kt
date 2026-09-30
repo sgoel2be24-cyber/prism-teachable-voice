@@ -174,7 +174,8 @@ class Snapshot(
         // A short button's own little box can hold one word of its own and not the dish: Zomato's
         // "ADD" sits over "customisable", and the card around both says "Margherita Pizza". Then the
         // card's labels follow (after the box's, so what was matched before still comes first).
-        val shortButton = own.isNotEmpty() && own.sumOf { Text.stable(it).length } <= 6
+        // (A number alone, the "1" of a "− 1 +" stepper, is not a button name.)
+        val shortButton = own.isNotEmpty() && own.sumOf { Text.stable(it).length } in 1..6
         if (shortButton && labels.size < 2) {
             val card = cardAround(row, n)
             if (card != null) {

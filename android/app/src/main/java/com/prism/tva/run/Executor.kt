@@ -1087,6 +1087,20 @@ class Executor(private val svc: TvaAccessibilityService) {
     }
 
     /**
+     * [label] starts with [item] word by word, allowing a misheard word ("margarita pizza" for the
+     * card "Margherita Pizza"), or [item] starts with the whole label. "Double Cheese Margherita"
+     * still doesn't start with "margherita".
+     */
+    private fun startsLike(label: String, item: String): Boolean {
+        val lw = label.split(' ').filter { it.isNotEmpty() }
+        val vw = item.split(' ').filter { it.isNotEmpty() }
+        if (lw.isEmpty() || vw.isEmpty()) return false
+        fun same(a: String, b: String) = a == b || (a.length >= 5 && b.length >= 5 && Text.sim(a, b) >= 0.75) || Text.soundsLike(a, b)
+        val k = minOf(lw.size, vw.size)
+        return (0 until k).all { same(lw[it], vw[it]) }
+    }
+
+    /**
      * How many of [item] the screen says are in the cart: a small number inside a − / + stepper in
      * the item's card (the card is found the same way as for anchors). Null if no such stepper.
      */
@@ -1107,7 +1121,7 @@ class Executor(private val svc: TvaAccessibilityService) {
                 val labels = s.labelsIn(cur, 40)
                 if (hops > 0 && labels.any { Text.norm(it) == "add" }) break
                 if (hops > 0 && s.subtree(cur).count { x -> x.idx != n.idx && x.label.trim().toIntOrNull() in 1..20 && (s.parentOf(x)?.children?.size ?: 0) >= 3 } > 0) break
-                if (labels.any { val l = Text.norm(it); l.isNotEmpty() && (l == want || l.startsWith("$want ") || want.startsWith("$l ")) }) return q
+                if (labels.any { val l = Text.norm(it); l.isNotEmpty() && (l == want || l.startsWith("$want ") || want.startsWith("$l ") || startsLike(l, want)) }) return q
                 cur = s.parentOf(cur); hops++
             }
         }
