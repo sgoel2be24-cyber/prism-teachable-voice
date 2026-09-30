@@ -502,17 +502,18 @@ notes(s, "All three bonus criteria are met with evidence from real runs. Beyond 
 # ================= 11. Checklist =================
 s = S[10]; drop_body(s)
 chk = [("Working prototype code — public or shared GitHub repo", REPO + "  ·  release tag PRISM_GENAI_HACKATHON_Y2026"),
-       ("README with reproducible setup instructions", "README with setup steps, a Dockerfile that builds the APK, and the installable APK in the GitHub release"),
+       ("README with reproducible setup instructions", "README with setup steps, requirements.txt, a Dockerfile that builds the APK, and the installable APK in the GitHub release"),
        ("Demo video, max 5 minutes (YouTube or Drive link)", "One unedited take in the order the theme asks for; the link is in the README and the form"),
        ("Presentation file (PPT or PDF)", "TIET_Update_Submission_ppt.pptx, in the repository"),
-       ("Architecture, target apps and known limitations (Theme 3)", "docs/architecture.md with diagrams; target apps and limitations in the README")]
+       ("Architecture, target apps and known limitations (Theme 3)", "docs/architecture.md with diagrams; target apps and limitations in the README"),
+       ("AI disclosure", "README → AI disclosure: gpt-oss-120b on Fireworks AI inside the app; Claude (Anthropic) as our coding assistant")]
 for i, (t, d) in enumerate(chk):
-    y = 1.85 + i * 0.95
-    rect(s, X0, y, XW, 0.8, TINT)
-    rect(s, X0 + 0.2, y + 0.16, 0.48, 0.48, GREEN, shape=MSO_SHAPE.OVAL)
-    text(s, X0 + 0.2, y + 0.16, 0.48, 0.48, "Y", size=16, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, X0 + 0.9, y + 0.07, XW - 1.1, 0.68, [[(t, {"bold": True, "color": INK, "size": 14})], [(d, {"color": MUTED, "size": 12})]], anchor=MSO_ANCHOR.MIDDLE)
-notes(s, "Everything the submission asks for is in the public repository under the release tag: code, README with setup and a Dockerfile, the APK, the demo video link, this presentation, and the architecture and limitations the theme asks for.")
+    y = 1.78 + i * 0.8
+    rect(s, X0, y, XW, 0.68, TINT)
+    rect(s, X0 + 0.2, y + 0.12, 0.44, 0.44, GREEN, shape=MSO_SHAPE.OVAL)
+    text(s, X0 + 0.2, y + 0.12, 0.44, 0.44, "Y", size=15, bold=True, color=WHITE, font=HEAD, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, X0 + 0.9, y + 0.05, XW - 1.1, 0.58, [[(t, {"bold": True, "color": INK, "size": 14})], [(d, {"color": MUTED, "size": 12})]], anchor=MSO_ANCHOR.MIDDLE)
+notes(s, "Everything the submission asks for is in the public repository under the release tag: code, README with setup and a Dockerfile, the APK, the demo video link, this presentation, the architecture and limitations the theme asks for, and the AI disclosure.")
 
 # ================= 12. Thank you =================
 s = S[11]

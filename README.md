@@ -73,6 +73,9 @@ docker build -t teachable-voice --build-arg FIREWORKS_API_KEY=fw_your_fireworks_
 docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice.apk
 ```
 
+The Python test tools and the presentation generator need `pip install -r requirements.txt`
+(the `recon/` scripts use only the standard library; the generator needs python-pptx).
+
 ## Repository
 
 | Path | Contents |
@@ -85,6 +88,15 @@ docker run --rm -v "$PWD/out:/out" teachable-voice      # -> out/teachable-voice
 | `.../ui/` | Status pill, text-to-speech, voice questions |
 | `recon/` | Scripts used to study the target apps and to test the assistant over adb (`eval_match.py` measures paraphrase accuracy) |
 | `docs/` | Architecture, app recon, recording/replay study, evaluation output |
+| `docs/deck/` | Generator for the presentation (`build_template.py`, the organisers' template, icons, screenshots) |
+| `requirements.txt` | Python packages for the tools above (the app itself builds with Gradle) |
+| `Dockerfile` | Builds the APK without a local Android SDK |
+
+## AI disclosure
+
+**Inside the app.** The assistant calls one hosted language model: `gpt-oss-120b` (OpenAI's open-weight model), served by Fireworks AI. It is used for three jobs: turning a demonstration into a task once (naming the values, describing each step, marking stray taps as not needed), understanding a command that isn't worded like the taught one, and choosing one action on a screen the fast path doesn't recognise. The model receives the command as text and, when acting, a numbered text list of the elements on the current screen (labels and positions). No screenshots or audio are sent. Known screens replay with no model call. Speech recognition and text-to-speech are Android's built-in services (`SpeechRecognizer`, `TextToSpeech`).
+
+**Building it.** We used Claude (Anthropic), through Claude Code, as a coding assistant throughout the project: the Kotlin code, the adb test scripts in `recon/`, the evaluation write-ups, this README and the presentation generator. Every commit it contributed to carries a `Co-Authored-By: Claude` line. Every result in this README was measured on a real phone (Oppo Reno3, Android 12). No other AI tools were used.
 
 ## Known limitations
 

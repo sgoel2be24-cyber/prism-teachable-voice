@@ -1,0 +1,14 @@
+# Requirements for Teachable Voice Automation.
+#
+# The Android app has no Python dependencies. It builds with Gradle (JDK 17+, Android SDK platform 35),
+# and its libraries are declared in android/app/build.gradle.kts. The Dockerfile builds the APK with
+# everything it needs. See README.md -> Build.
+#
+# The Python tools in this repository:
+#   recon/*.py  (adb test benches, command-matching eval, run reports)  -> standard library only (Python 3.9+)
+#   docs/deck/build_template.py  (regenerates the presentation)         -> the two packages below
+#
+#   pip install -r requirements.txt
+python-pptx>=1.0.2
+lxml>=5.0
+# docs/deck/gen_icons.js (redraws the slide icons, optional): npm install react react-dom react-icons sharp
